@@ -1,5 +1,6 @@
 import Papa from "papaparse";
 import type { CellValue, Dataset, Row, SheetInput, WorkbookInput } from "./types";
+import { resolveHeaders } from "./headers";
 
 // Normalise une valeur brute issue du parsing.
 function normalizeCell(v: unknown): CellValue {
@@ -11,58 +12,57 @@ function normalizeCell(v: unknown): CellValue {
   return s;
 }
 
-function buildDataset(
-  rawRows: Record<string, unknown>[],
-  fileName: string,
-  headerOrder?: string[],
-): Dataset {
-  const columnSet = new Set<string>();
-  if (headerOrder) headerOrder.forEach((h) => columnSet.add(h));
-  rawRows.forEach((r) => Object.keys(r).forEach((k) => columnSet.add(k)));
-  const columns = Array.from(columnSet).filter((c) => c !== "" && c != null);
+// Construit un Dataset à partir de lignes brutes (tableaux de cellules, sans
+// hypothèse préalable sur la présence d'un en-tête). Utilisé aussi bien pour
+// le CSV que pour l'Excel : c'est le seul endroit qui décide des colonnes.
+function buildDatasetFromRows(rawRows: unknown[][], fileName: string): Dataset {
+  const { headers, headerRowPresent } = resolveHeaders(rawRows);
+  const dataRows = headerRowPresent ? rawRows.slice(1) : rawRows;
 
-  const rows: Row[] = rawRows.map((r) => {
+  // Dédoublonne les noms de colonnes identiques en gardant l'ordre d'origine.
+  const seen = new Map<string, number>();
+  const columns = headers.map((h) => {
+    const base = h && h.trim() !== "" ? h : "Colonne";
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    return n === 1 ? base : `${base} (${n})`;
+  });
+
+  const rows: Row[] = dataRows.map((r) => {
     const row: Row = {};
-    for (const c of columns) row[c] = normalizeCell(r[c]);
+    columns.forEach((c, i) => {
+      row[c] = normalizeCell(r[i]);
+    });
     return row;
   });
 
   // Retire les lignes entièrement vides.
   const cleaned = rows.filter((r) => columns.some((c) => r[c] !== null));
 
-  return { columns, rows: cleaned, fileName };
+  return {
+    columns,
+    rows: cleaned,
+    fileName,
+    headerInferred: !headerRowPresent,
+  };
 }
 
 export function parseCSV(text: string, fileName: string): Dataset {
-  const res = Papa.parse<Record<string, unknown>>(text, {
-    header: true,
+  const res = Papa.parse<unknown[]>(text, {
+    header: false,
     skipEmptyLines: "greedy",
     dynamicTyping: true,
-    transformHeader: (h) => h.trim(),
   });
-  const headerOrder = res.meta.fields ?? undefined;
-  return buildDataset(res.data, fileName, headerOrder);
+  return buildDatasetFromRows(res.data, fileName);
 }
 
-// Lit une feuille précise d'un classeur déjà ouvert par SheetJS.
-function datasetFromSheet(
+// Lignes brutes (tableaux de cellules) d'une feuille d'un classeur déjà
+// ouvert par SheetJS, sans hypothèse sur la présence d'un en-tête.
+function rawRowsFromSheet(
   XLSX: typeof import("xlsx"),
   sheet: import("xlsx").WorkSheet,
-  fileName: string,
-): Dataset {
-  const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-    defval: null,
-    raw: true,
-  });
-  // Récupère l'ordre des colonnes depuis la première ligne d'en-tête.
-  const headerJson = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    raw: true,
-  });
-  const headerOrder = Array.isArray(headerJson[0])
-    ? (headerJson[0] as unknown[]).map((h) => String(h).trim())
-    : undefined;
-  return buildDataset(json, fileName, headerOrder);
+): unknown[][] {
+  return XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true });
 }
 
 // Lit uniquement la première feuille (conservé pour compatibilité).
@@ -72,7 +72,7 @@ export async function parseExcel(
 ): Promise<Dataset> {
   const XLSX = await import("xlsx");
   const wb = XLSX.read(buffer, { type: "array", cellDates: true });
-  return datasetFromSheet(XLSX, wb.Sheets[wb.SheetNames[0]], fileName);
+  return buildDatasetFromRows(rawRowsFromSheet(XLSX, wb.Sheets[wb.SheetNames[0]]), fileName);
 }
 
 // Lit toutes les feuilles d'un classeur Excel. Les feuilles vides (sans
@@ -86,7 +86,10 @@ export async function parseExcelAllSheets(
   const wb = XLSX.read(buffer, { type: "array", cellDates: true });
   const sheets: SheetInput[] = [];
   for (const sheetName of wb.SheetNames) {
-    const dataset = datasetFromSheet(XLSX, wb.Sheets[sheetName], fileName);
+    const dataset = buildDatasetFromRows(
+      rawRowsFromSheet(XLSX, wb.Sheets[sheetName]),
+      fileName,
+    );
     if (dataset.columns.length > 0 && dataset.rows.length > 0) {
       sheets.push({ name: sheetName, dataset });
     }

@@ -10,6 +10,9 @@ export interface Dataset {
   columns: string[];
   rows: Row[];
   fileName: string;
+  // true si le fichier source n'avait pas de ligne d'en-têtes détectable :
+  // les noms de colonnes ont été générés automatiquement (Valeur 1, Date 2…).
+  headerInferred?: boolean;
 }
 
 // --- Fichiers multi-feuilles (Excel) ---
@@ -192,6 +195,38 @@ export interface RegressionResult {
   points: RegressionPoint[];
 }
 
+// --- Compréhension du contexte : secteur d'activité & facteurs clés ---
+
+// Catégories reconnues par le dictionnaire heuristique local (lib/sectors.ts).
+// L'analyse IA optionnelle n'est pas limitée à cette liste : elle renvoie son
+// propre libellé libre dans `sectorLabel`, `sector` reste "inconnu" pour elle.
+export type SectorId =
+  | "rh"
+  | "ventes"
+  | "finance"
+  | "sante"
+  | "education"
+  | "immobilier"
+  | "logistique"
+  | "marketing"
+  | "inconnu";
+
+export interface HeaderSuggestion {
+  column: string; // nom de colonne actuel
+  suggestion: string; // nom proposé (IA uniquement) — informatif, non appliqué automatiquement
+}
+
+export interface ContextResult {
+  source: "heuristic" | "ai";
+  sector: SectorId;
+  sectorLabel: string;
+  confidence: number; // 0..1
+  matchedKeywords: string[]; // mots-clés ayant permis la détection (heuristique)
+  keyColumns: string[]; // colonnes du dataset jugées pertinentes pour l'analyse
+  rationale: string; // courte explication (français)
+  headerSuggestions: HeaderSuggestion[];
+}
+
 // État du pipeline (nettoyage + analyse) pour une feuille donnée. Chaque
 // feuille d'un classeur multi-onglets est traitée indépendamment : ses
 // propres réglages de nettoyage, son propre résultat, sa propre analyse.
@@ -201,6 +236,9 @@ export interface SheetState {
   options: CleaningOptions;
   result: CleaningResult | null; // null tant que la feuille n'a pas été nettoyée
   analysis: Analysis | null;
+  // Résultat de l'analyse IA optionnelle pour cette feuille, si l'utilisateur
+  // l'a activée ; null => on affiche l'analyse heuristique locale par défaut.
+  aiContext: ContextResult | null;
 }
 
 export const DEFAULT_CLEANING: CleaningOptions = {

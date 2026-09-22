@@ -4,9 +4,12 @@ Chargez un fichier **CSV** ou **Excel**, nettoyez et apurez automatiquement vos
 données, explorez-les (statistiques, graphiques, corrélations, observations
 générées) puis exportez le tout en **XLSX**, **PDF** ou **Word**.
 
-> ⚙️ 100 % côté navigateur : vos données ne quittent jamais votre machine, aucun
-> serveur ne les reçoit. C'est aussi ce qui rend le déploiement sur Vercel
-> instantané et gratuit — il n'y a pas de backend à héberger.
+> ⚙️ 100 % côté navigateur par défaut : vos données ne quittent jamais votre
+> machine, aucun serveur ne les reçoit. La seule exception est l'**analyse IA
+> optionnelle** (secteur d'activité, colonnes clés) : elle n'est déclenchée
+> que si vous cliquez explicitement dessus, et envoie alors un échantillon de
+> vos données à l'API Claude. Le nettoyage, l'analyse, le machine learning et
+> les exports restent, eux, toujours 100 % locaux.
 
 ## Fonctionnalités
 
@@ -18,6 +21,19 @@ générées) puis exportez le tout en **XLSX**, **PDF** ou **Word**.
   réglages d'une feuille à toutes les feuilles pas encore traitées.
 - **Profilage automatique** : type de chaque colonne (numérique, texte, date,
   booléen), valeurs manquantes, valeurs uniques, min/max/moyenne/médiane, etc.
+- **Compréhension du contexte** (nouveau) :
+  - **En-têtes manquants** : si le fichier n'a pas de ligne de titres, DataLab
+    le détecte et génère des noms de colonnes plausibles d'après leur contenu
+    (`Date 1`, `Valeur 2`, `Texte 3`…).
+  - **Secteur d'activité** : un dictionnaire de mots-clés (RH, ventes, finance,
+    santé, éducation, immobilier, logistique, marketing…) reconnaît le
+    domaine probable à partir des noms de colonnes, et suggère les
+    **colonnes clés** à privilégier — pré-sélectionnées dans le clustering et
+    la régression. 100 % local, aucune donnée envoyée.
+  - **Analyse IA optionnelle** : un bouton « Activer l'analyse IA » envoie un
+    échantillon de lignes à Claude pour une compréhension plus fine (secteur,
+    colonnes clés, suggestions de noms de colonnes) — désactivé par défaut,
+    nécessite une clé API côté serveur (voir plus bas).
 - **Nettoyage & apurement** :
   - suppression des espaces superflus,
   - harmonisation des marqueurs de vide (`NA`, `N/A`, `null`, `-`, `?`…),
@@ -54,7 +70,10 @@ générées) puis exportez le tout en **XLSX**, **PDF** ou **Word**.
 - [jsPDF](https://github.com/parallax/jsPDF) + jspdf-autotable (PDF), [docx](https://docx.js.org/) (Word)
 - `lib/ml.ts` : clustering k-means et régression OLS implémentés à la main
   (algèbre linéaire minimale, sans dépendance), pour rester 100 % navigateur.
-- Aucune base de données, aucune API : tout s'exécute dans le navigateur.
+- Aucune base de données. Une unique route serveur optionnelle
+  (`app/api/context`) proxy l'API Claude pour l'analyse IA — elle n'est
+  appelée que si l'utilisateur active ce mode ; tout le reste s'exécute dans
+  le navigateur.
 
 ## Démarrer en local
 
@@ -66,6 +85,18 @@ npm run dev
 
 Un fichier d'exemple volontairement « sale » (doublons, valeurs manquantes,
 formats mélangés, valeurs aberrantes) est fourni : `exemples/exemple_donnees.csv`.
+
+Pour activer l'analyse IA optionnelle en local, copie `.env.local.example`
+vers `.env.local` et renseigne ta clé :
+
+```bash
+cp .env.local.example .env.local
+# puis édite .env.local et remplis ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Sans cette clé, l'application fonctionne normalement : seul le bouton
+« Activer l'analyse IA » renvoie une erreur explicite, tout le reste
+(nettoyage, détection de secteur heuristique, ML, exports) reste disponible.
 
 Autres commandes :
 
@@ -97,7 +128,11 @@ configuration particulière n'est nécessaire.
    - Framework Preset : `Next.js`
    - Build Command : `next build` (par défaut)
    - Output : géré automatiquement
-   - Aucune variable d'environnement requise.
+   - Aucune variable d'environnement requise pour les fonctionnalités de
+     base. Pour activer l'analyse IA optionnelle, ajoute une variable
+     d'environnement **`ANTHROPIC_API_KEY`** (Project Settings → Environment
+     Variables) avec ta clé API Anthropic — jamais exposée au navigateur,
+     utilisée uniquement par la route serveur `app/api/context`.
 4. Clique **Deploy**. En ~1 minute, l'app est en ligne sur une URL
    `https://<projet>.vercel.app`.
 
@@ -121,9 +156,12 @@ app/
   layout.tsx        # métadonnées + layout racine
   page.tsx          # orchestrateur (upload → par feuille : nettoyage → analyse → export groupé)
   globals.css       # thème (clair/sombre) et styles
+  api/
+    context/route.ts # route serveur optionnelle : proxy vers l'API Claude
 components/
   FileUpload.tsx    # zone de chargement (renvoie toutes les feuilles du fichier)
   SheetTabs.tsx     # navigation entre les feuilles d'un classeur multi-feuilles
+  ContextPanel.tsx  # secteur détecté, colonnes clés, bouton d'analyse IA
   DataTable.tsx     # aperçu tabulaire
   ProfileView.tsx   # profil du jeu de données
   CleaningPanel.tsx # options de nettoyage
@@ -131,8 +169,11 @@ components/
   MLPanel.tsx       # UI clustering k-means & régression linéaire
   ExportBar.tsx     # boutons d'export (regroupe les feuilles nettoyées)
 lib/
-  types.ts          # types partagés (dont SheetInput / WorkbookInput / SheetState)
+  types.ts          # types partagés (dont SheetInput / WorkbookInput / SheetState / ContextResult)
   parse.ts          # lecture CSV / Excel (toutes feuilles)
+  headers.ts        # détection / génération des en-têtes manquants
+  sectors.ts        # dictionnaire de secteurs & détection heuristique locale
+  context-ai.ts     # appel client vers /api/context (analyse IA optionnelle)
   stats.ts          # inférence de type + fonctions statistiques
   profile.ts        # profilage des colonnes
   clean.ts          # pipeline de nettoyage / apurement
@@ -161,3 +202,10 @@ exemples/
   sur Vercel.
 - Les dates sont détectées mais traitées comme du texte dans l'analyse ; une
   gestion temporelle dédiée (séries, saisonnalité) serait une évolution utile.
+- La détection de secteur heuristique repose sur un dictionnaire de mots-clés
+  fixe (`lib/sectors.ts`) : elle couvre les cas courants mais peut se tromper
+  sur des noms de colonnes atypiques ou dans une langue non prévue — c'est
+  précisément pour ces cas que l'analyse IA optionnelle existe.
+- Les suggestions de noms de colonnes de l'IA sont affichées à titre
+  informatif mais ne renomment pas automatiquement les colonnes ; les
+  appliquer resterait une évolution manuelle à faire dans l'interface.

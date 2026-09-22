@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import FileUpload from "@/components/FileUpload";
 import SheetTabs from "@/components/SheetTabs";
+import ContextPanel from "@/components/ContextPanel";
 import DataTable from "@/components/DataTable";
 import ProfileView from "@/components/ProfileView";
 import CleaningPanel from "@/components/CleaningPanel";
@@ -21,9 +22,11 @@ import ExportBar from "@/components/ExportBar";
 import { profileDataset } from "@/lib/profile";
 import { cleanDataset } from "@/lib/clean";
 import { analyzeDataset } from "@/lib/analyze";
+import { detectContextHeuristic } from "@/lib/sectors";
 import {
   DEFAULT_CLEANING,
   type CleaningOptions,
+  type ContextResult,
   type SheetState,
   type WorkbookInput,
 } from "@/lib/types";
@@ -44,6 +47,12 @@ export default function Home() {
     [active],
   );
 
+  const heuristicContext = useMemo(
+    () => (active ? detectContextHeuristic(active.dataset.columns) : null),
+    [active],
+  );
+  const effectiveContext = active?.aiContext ?? heuristicContext;
+
   const onLoaded = (wb: WorkbookInput) => {
     setWorkbook(wb);
     setSheets(
@@ -53,10 +62,17 @@ export default function Home() {
         options: DEFAULT_CLEANING,
         result: null,
         analysis: null,
+        aiContext: null,
       })),
     );
     setActiveIndex(0);
     setStage("workspace");
+  };
+
+  const setActiveAiContext = (ctx: ContextResult | null) => {
+    setSheets((prev) =>
+      prev.map((s, i) => (i === activeIndex ? { ...s, aiContext: ctx } : s)),
+    );
   };
 
   const setActiveOptions = (opts: CleaningOptions) => {
@@ -139,7 +155,7 @@ export default function Home() {
             </span>
             DataLab
           </div>
-          <span className="tag">Analyse de données · 100% navigateur</span>
+          <span className="tag">Analyse de données · 100% navigateur (sauf IA optionnelle)</span>
         </div>
       </header>
 
@@ -171,6 +187,15 @@ export default function Home() {
                 sheets={sheets}
                 activeIndex={activeIndex}
                 onSelect={setActiveIndex}
+              />
+            )}
+
+            {heuristicContext && (
+              <ContextPanel
+                dataset={active.dataset}
+                heuristic={heuristicContext}
+                aiResult={active.aiContext}
+                onAiResult={setActiveAiContext}
               />
             )}
 
@@ -297,6 +322,7 @@ export default function Home() {
                     key={workbook.fileName + ":" + active.name + ":" + active.result.rowsAfter}
                     dataset={active.result.dataset}
                     profile={active.analysis.profile}
+                    suggestedColumns={effectiveContext?.keyColumns}
                   />
                 </div>
 
@@ -348,7 +374,8 @@ export default function Home() {
         )}
 
         <p className="foot">
-          DataLab — vos données ne quittent jamais votre navigateur. Nettoyage,
+          DataLab — vos données ne quittent jamais votre navigateur, sauf si
+          vous activez explicitement l&apos;analyse IA optionnelle. Nettoyage,
           apurement, analyse et export XLSX / PDF / Word.
         </p>
       </main>

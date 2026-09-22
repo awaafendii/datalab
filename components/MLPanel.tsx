@@ -46,13 +46,19 @@ const tooltipStyle = {
 interface Props {
   dataset: Dataset;
   profile: DatasetProfile;
+  // Colonnes jugées clés par la détection de contexte (heuristique ou IA) :
+  // placées en tête de liste pour que les sélections par défaut du
+  // clustering et de la régression les privilégient.
+  suggestedColumns?: string[];
 }
 
-export default function MLPanel({ dataset, profile }: Props) {
-  const numericColumns = useMemo(
-    () => profile.columns.filter((c) => c.type === "number").map((c) => c.name),
-    [profile],
-  );
+export default function MLPanel({ dataset, profile, suggestedColumns }: Props) {
+  const numericColumns = useMemo(() => {
+    const all = profile.columns.filter((c) => c.type === "number").map((c) => c.name);
+    if (!suggestedColumns || suggestedColumns.length === 0) return all;
+    const suggested = new Set(suggestedColumns);
+    return [...all.filter((c) => suggested.has(c)), ...all.filter((c) => !suggested.has(c))];
+  }, [profile, suggestedColumns]);
 
   if (numericColumns.length < 2) {
     return (
