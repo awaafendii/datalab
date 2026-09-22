@@ -1,0 +1,11 @@
+id,nom,age,ville,salaire,note,actif
+1, Alice ,34,Dakar,"1 200 000",4.5,oui
+2,Bob,29,Conakry,950000,3.8,non
+3, Chloé,,Dakar,1100000,,oui
+4,David,41,Kindia,1 050 000,4.1,oui
+5,Alice,34,Dakar,1200000,4.5,oui
+6,Emma,120,Conakry,9999999,2.1,non
+7,Farid,38,N/A,1 300 000,4.9,oui
+8,Gaël,45,Kindia,,3.3,non
+9,Hana,31,Dakar,1150000,4.0,vrai
+10,Bob,29,Conakry,950000,3.8,faux

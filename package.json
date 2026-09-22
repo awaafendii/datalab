@@ -1,0 +1,36 @@
+{
+  "name": "datalab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Plateforme d'analyse de données : nettoyage, apurement, analyse et export (XLSX/PDF/Word), 100% côté navigateur.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "docx": "8.5.0",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.35",
+    "file-saver": "2.0.5",
+    "jspdf": "2.5.2",
+    "jspdf-autotable": "3.8.4",
+    "lucide-react": "0.451.0",
+    "next": "^14.2.35",
+    "papaparse": "5.4.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "recharts": "2.12.7",
+    "simple-statistics": "7.8.7",
+    "xlsx": "0.18.5"
+  },
+  "devDependencies": {
+    "@types/file-saver": "2.0.7",
+    "@types/node": "20.16.11",
+    "@types/papaparse": "5.3.14",
+    "@types/react": "18.3.11",
+    "@types/react-dom": "18.3.0",
+    "typescript": "5.6.3"
+  }
+}
