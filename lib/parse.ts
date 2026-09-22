@@ -1,5 +1,5 @@
 import Papa from "papaparse";
-import type { CellValue, Dataset, Row } from "./types";
+import type { CellValue, Dataset, Row, SheetInput, WorkbookInput } from "./types";
 
 // Normalise une valeur brute issue du parsing.
 function normalizeCell(v: unknown): CellValue {
@@ -44,14 +44,12 @@ export function parseCSV(text: string, fileName: string): Dataset {
   return buildDataset(res.data, fileName, headerOrder);
 }
 
-export async function parseExcel(
-  buffer: ArrayBuffer,
+// Lit une feuille précise d'un classeur déjà ouvert par SheetJS.
+function datasetFromSheet(
+  XLSX: typeof import("xlsx"),
+  sheet: import("xlsx").WorkSheet,
   fileName: string,
-): Promise<Dataset> {
-  const XLSX = await import("xlsx");
-  const wb = XLSX.read(buffer, { type: "array", cellDates: true });
-  const sheetName = wb.SheetNames[0];
-  const sheet = wb.Sheets[sheetName];
+): Dataset {
   const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
     defval: null,
     raw: true,
@@ -67,15 +65,52 @@ export async function parseExcel(
   return buildDataset(json, fileName, headerOrder);
 }
 
-export async function parseFile(file: File): Promise<Dataset> {
+// Lit uniquement la première feuille (conservé pour compatibilité).
+export async function parseExcel(
+  buffer: ArrayBuffer,
+  fileName: string,
+): Promise<Dataset> {
+  const XLSX = await import("xlsx");
+  const wb = XLSX.read(buffer, { type: "array", cellDates: true });
+  return datasetFromSheet(XLSX, wb.Sheets[wb.SheetNames[0]], fileName);
+}
+
+// Lit toutes les feuilles d'un classeur Excel. Les feuilles vides (sans
+// colonne ou sans ligne exploitable — onglets de garde, feuilles masquées
+// laissées vides, etc.) sont ignorées.
+export async function parseExcelAllSheets(
+  buffer: ArrayBuffer,
+  fileName: string,
+): Promise<SheetInput[]> {
+  const XLSX = await import("xlsx");
+  const wb = XLSX.read(buffer, { type: "array", cellDates: true });
+  const sheets: SheetInput[] = [];
+  for (const sheetName of wb.SheetNames) {
+    const dataset = datasetFromSheet(XLSX, wb.Sheets[sheetName], fileName);
+    if (dataset.columns.length > 0 && dataset.rows.length > 0) {
+      sheets.push({ name: sheetName, dataset });
+    }
+  }
+  return sheets;
+}
+
+// Lit un fichier utilisateur (CSV ou Excel) et renvoie ses feuilles. Un CSV
+// produit toujours une seule feuille ; un classeur Excel peut en produire
+// plusieurs, chacune traitée indépendamment en aval.
+export async function parseFile(file: File): Promise<WorkbookInput> {
   const name = file.name.toLowerCase();
   if (name.endsWith(".csv") || name.endsWith(".txt")) {
     const text = await file.text();
-    return parseCSV(text, file.name);
+    const dataset = parseCSV(text, file.name);
+    return { fileName: file.name, sheets: [{ name: "Feuille 1", dataset }] };
   }
   if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
     const buffer = await file.arrayBuffer();
-    return parseExcel(buffer, file.name);
+    const sheets = await parseExcelAllSheets(buffer, file.name);
+    if (sheets.length === 0) {
+      throw new Error("Aucune feuille exploitable dans ce classeur Excel.");
+    }
+    return { fileName: file.name, sheets };
   }
   throw new Error(
     "Format non supporté. Utilisez un fichier .csv, .xls ou .xlsx.",

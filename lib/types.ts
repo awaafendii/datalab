@@ -12,6 +12,21 @@ export interface Dataset {
   fileName: string;
 }
 
+// --- Fichiers multi-feuilles (Excel) ---
+
+// Une feuille telle que lue depuis le fichier source, avant tout nettoyage.
+export interface SheetInput {
+  name: string;
+  dataset: Dataset;
+}
+
+// Résultat du parsing d'un fichier : un CSV produit toujours une seule
+// "feuille" ; un classeur Excel peut en produire plusieurs.
+export interface WorkbookInput {
+  fileName: string;
+  sheets: SheetInput[];
+}
+
 export interface NumericStats {
   count: number;
   missing: number;
@@ -175,6 +190,17 @@ export interface RegressionResult {
   mae: number;
   equation: string;
   points: RegressionPoint[];
+}
+
+// État du pipeline (nettoyage + analyse) pour une feuille donnée. Chaque
+// feuille d'un classeur multi-onglets est traitée indépendamment : ses
+// propres réglages de nettoyage, son propre résultat, sa propre analyse.
+export interface SheetState {
+  name: string;
+  dataset: Dataset; // données brutes de la feuille, telles que chargées
+  options: CleaningOptions;
+  result: CleaningResult | null; // null tant que la feuille n'a pas été nettoyée
+  analysis: Analysis | null;
 }
 
 export const DEFAULT_CLEANING: CleaningOptions = {

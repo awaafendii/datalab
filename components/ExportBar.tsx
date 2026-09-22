@@ -4,16 +4,23 @@ import { useState } from "react";
 import { FileText, FileSpreadsheet, FileType2 } from "lucide-react";
 import type { Analysis, Dataset } from "@/lib/types";
 
-interface Props {
+export interface ExportSheetInput {
+  name: string;
   dataset: Dataset;
   analysis: Analysis;
 }
 
+interface Props {
+  fileName: string;
+  sheets: ExportSheetInput[];
+}
+
 type Kind = "xlsx" | "pdf" | "docx";
 
-export default function ExportBar({ dataset, analysis }: Props) {
+export default function ExportBar({ fileName, sheets }: Props) {
   const [busy, setBusy] = useState<Kind | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const multi = sheets.length > 1;
 
   const run = async (kind: Kind) => {
     setError(null);
@@ -21,13 +28,13 @@ export default function ExportBar({ dataset, analysis }: Props) {
     try {
       if (kind === "xlsx") {
         const { exportXLSX } = await import("@/lib/export-xlsx");
-        await exportXLSX(dataset, analysis);
+        await exportXLSX(fileName, sheets);
       } else if (kind === "pdf") {
         const { exportPDF } = await import("@/lib/export-pdf");
-        await exportPDF(dataset, analysis);
+        await exportPDF(fileName, sheets);
       } else {
         const { exportDOCX } = await import("@/lib/export-docx");
-        await exportDOCX(dataset, analysis);
+        await exportDOCX(fileName, sheets);
       }
     } catch (e) {
       setError(
@@ -60,8 +67,9 @@ export default function ExportBar({ dataset, analysis }: Props) {
         </button>
       </div>
       <p className="hint" style={{ marginTop: 10 }}>
-        L&apos;Excel contient les données nettoyées + le profil + les corrélations +
-        les observations. Le PDF et le Word produisent un rapport complet.
+        {multi
+          ? `L'Excel regroupe un onglet de données par feuille (${sheets.length}) plus un sommaire, un profil, des corrélations et des observations combinés. Le PDF et le Word produisent un rapport complet avec une section par feuille.`
+          : "L'Excel contient les données nettoyées + le profil + les corrélations + les observations. Le PDF et le Word produisent un rapport complet."}
       </p>
       {error && (
         <div className="error-box" style={{ marginTop: 12 }}>

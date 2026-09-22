@@ -1,7 +1,17 @@
 import type { Analysis, Dataset } from "./types";
+import { loadSaveAs } from "./save-file";
+
+// Une feuille prête à l'export : données nettoyées + analyse correspondante.
+export interface ExportSheet {
+  name: string;
+  dataset: Dataset;
+  analysis: Analysis;
+}
 
 // Construit le document Word et renvoie { doc, Packer } (testable hors navigateur).
-async function buildDocument(dataset: Dataset, analysis: Analysis) {
+// Avec une seule feuille, produit exactement le même rapport qu'avant. Avec
+// plusieurs, ajoute un sommaire puis une section par feuille (saut de page).
+async function buildDocument(fileName: string, sheets: ExportSheet[]) {
   const {
     Document,
     Packer,
@@ -13,9 +23,12 @@ async function buildDocument(dataset: Dataset, analysis: Analysis) {
     TextRun,
     WidthType,
     AlignmentType,
+    PageBreak,
   } = await import("docx");
 
   const BLUE = "2563EB";
+  const multi = sheets.length > 1;
+  const sectionHeading = multi ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1;
 
   const cell = (text: string, opts?: { bold?: boolean; fill?: string }) =>
     new TableCell({
@@ -45,39 +58,6 @@ async function buildDocument(dataset: Dataset, analysis: Analysis) {
 
   const fullWidth = { size: 100, type: WidthType.PERCENTAGE };
 
-  // Tableau de synthèse
-  const synthTable = new Table({
-    width: fullWidth,
-    rows: [
-      headerRow(["Indicateur", "Valeur"]),
-      dataRow(["Lignes", String(analysis.profile.rowCount)]),
-      dataRow(["Colonnes", String(analysis.profile.columnCount)]),
-      dataRow(["Lignes en double", String(analysis.profile.duplicateRows)]),
-      dataRow(["Valeurs manquantes", String(analysis.profile.totalMissing)]),
-    ],
-  });
-
-  // Tableau de profil
-  const profileTable = new Table({
-    width: fullWidth,
-    rows: [
-      headerRow(["Colonne", "Type", "Rempli", "Manq.", "% Manq.", "Uniques", "Moy.", "Méd.", "Outliers"]),
-      ...analysis.profile.columns.map((c) =>
-        dataRow([
-          c.name,
-          c.type,
-          String(c.count),
-          String(c.missing),
-          String(c.missingPct),
-          String(c.unique),
-          c.numeric ? String(c.numeric.mean) : "-",
-          c.numeric ? String(c.numeric.median) : "-",
-          c.outliers != null ? String(c.outliers) : "-",
-        ]),
-      ),
-    ],
-  });
-
   const children: (InstanceType<typeof Paragraph> | InstanceType<typeof Table>)[] = [
     new Paragraph({
       text: "Rapport d'analyse de données",
@@ -87,48 +67,106 @@ async function buildDocument(dataset: Dataset, analysis: Analysis) {
       alignment: AlignmentType.LEFT,
       children: [
         new TextRun({
-          text: `Fichier : ${dataset.fileName}  •  Généré le ${new Date().toLocaleString("fr-FR")}`,
+          text: `Fichier : ${fileName}${multi ? `  •  ${sheets.length} feuilles` : ""}  •  Généré le ${new Date().toLocaleString("fr-FR")}`,
           italics: true,
           color: "666666",
           size: 18,
         }),
       ],
     }),
-    new Paragraph({ text: "Synthèse", heading: HeadingLevel.HEADING_1 }),
-    synthTable,
-    new Paragraph({ text: "" }),
-    new Paragraph({
-      text: "Observations et appréciations",
-      heading: HeadingLevel.HEADING_1,
-    }),
-    ...analysis.observations.map(
-      (o) => new Paragraph({ text: o, bullet: { level: 0 } }),
-    ),
-    new Paragraph({ text: "" }),
-    new Paragraph({
-      text: "Profil des colonnes",
-      heading: HeadingLevel.HEADING_1,
-    }),
-    profileTable,
   ];
 
-  if (analysis.correlations.length > 0) {
+  if (multi) {
     children.push(
-      new Paragraph({ text: "" }),
-      new Paragraph({
-        text: "Corrélations principales",
-        heading: HeadingLevel.HEADING_1,
-      }),
+      new Paragraph({ text: "Sommaire", heading: HeadingLevel.HEADING_1 }),
       new Table({
         width: fullWidth,
         rows: [
-          headerRow(["Variable A", "Variable B", "r (Pearson)"]),
-          ...analysis.correlations
-            .slice(0, 15)
-            .map((c) => dataRow([c.a, c.b, String(c.r)])),
+          headerRow(["Feuille", "Lignes", "Colonnes", "Doublons retirés", "Valeurs manquantes"]),
+          ...sheets.map((s) =>
+            dataRow([
+              s.name,
+              String(s.analysis.profile.rowCount),
+              String(s.analysis.profile.columnCount),
+              String(s.analysis.profile.duplicateRows),
+              String(s.analysis.profile.totalMissing),
+            ]),
+          ),
         ],
       }),
+      new Paragraph({ text: "" }),
     );
+  }
+
+  for (const s of sheets) {
+    if (multi) {
+      children.push(
+        new Paragraph({ children: [new PageBreak()] }),
+        new Paragraph({ text: `Feuille : ${s.name}`, heading: HeadingLevel.HEADING_1 }),
+      );
+    }
+
+    // Tableau de synthèse
+    const synthTable = new Table({
+      width: fullWidth,
+      rows: [
+        headerRow(["Indicateur", "Valeur"]),
+        dataRow(["Lignes", String(s.analysis.profile.rowCount)]),
+        dataRow(["Colonnes", String(s.analysis.profile.columnCount)]),
+        dataRow(["Lignes en double", String(s.analysis.profile.duplicateRows)]),
+        dataRow(["Valeurs manquantes", String(s.analysis.profile.totalMissing)]),
+      ],
+    });
+
+    // Tableau de profil
+    const profileTable = new Table({
+      width: fullWidth,
+      rows: [
+        headerRow(["Colonne", "Type", "Rempli", "Manq.", "% Manq.", "Uniques", "Moy.", "Méd.", "Outliers"]),
+        ...s.analysis.profile.columns.map((c) =>
+          dataRow([
+            c.name,
+            c.type,
+            String(c.count),
+            String(c.missing),
+            String(c.missingPct),
+            String(c.unique),
+            c.numeric ? String(c.numeric.mean) : "-",
+            c.numeric ? String(c.numeric.median) : "-",
+            c.outliers != null ? String(c.outliers) : "-",
+          ]),
+        ),
+      ],
+    });
+
+    children.push(
+      new Paragraph({ text: "Synthèse", heading: sectionHeading }),
+      synthTable,
+      new Paragraph({ text: "" }),
+      new Paragraph({ text: "Observations et appréciations", heading: sectionHeading }),
+      ...s.analysis.observations.map(
+        (o) => new Paragraph({ text: o, bullet: { level: 0 } }),
+      ),
+      new Paragraph({ text: "" }),
+      new Paragraph({ text: "Profil des colonnes", heading: sectionHeading }),
+      profileTable,
+    );
+
+    if (s.analysis.correlations.length > 0) {
+      children.push(
+        new Paragraph({ text: "" }),
+        new Paragraph({ text: "Corrélations principales", heading: sectionHeading }),
+        new Table({
+          width: fullWidth,
+          rows: [
+            headerRow(["Variable A", "Variable B", "r (Pearson)"]),
+            ...s.analysis.correlations
+              .slice(0, 15)
+              .map((c) => dataRow([c.a, c.b, String(c.r)])),
+          ],
+        }),
+      );
+    }
   }
 
   const doc = new Document({
@@ -140,22 +178,22 @@ async function buildDocument(dataset: Dataset, analysis: Analysis) {
 
 // Renvoie les octets du .docx (pour tests / usage programmatique).
 export async function buildDOCX(
-  dataset: Dataset,
-  analysis: Analysis,
+  fileName: string,
+  sheets: ExportSheet[],
 ): Promise<Buffer> {
-  const { doc, Packer } = await buildDocument(dataset, analysis);
+  const { doc, Packer } = await buildDocument(fileName, sheets);
   return Packer.toBuffer(doc);
 }
 
 // Export Word : construit puis déclenche le téléchargement dans le navigateur.
 export async function exportDOCX(
-  dataset: Dataset,
-  analysis: Analysis,
+  fileName: string,
+  sheets: ExportSheet[],
 ): Promise<void> {
-  const { doc, Packer } = await buildDocument(dataset, analysis);
-  const { saveAs } = await import("file-saver");
+  const { doc, Packer } = await buildDocument(fileName, sheets);
+  const saveAs = await loadSaveAs();
   const blob = await Packer.toBlob(doc);
-  saveAs(blob, baseName(dataset.fileName) + "_rapport.docx");
+  saveAs(blob, baseName(fileName) + "_rapport.docx");
 }
 
 function baseName(name: string): string {

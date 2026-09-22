@@ -10,7 +10,12 @@ générées) puis exportez le tout en **XLSX**, **PDF** ou **Word**.
 
 ## Fonctionnalités
 
-- **Chargement** CSV / XLS / XLSX (glisser-déposer ou parcourir).
+- **Chargement** CSV / XLS / XLSX (glisser-déposer ou parcourir), **y compris
+  les classeurs Excel multi-feuilles** : chaque feuille est détectée, puis
+  nettoyée, analysée et modélisée **indépendamment** (ses propres réglages,
+  son propre profil, ses propres observations). Les feuilles vides sont
+  ignorées automatiquement. Un bouton permet d'appliquer en un clic les
+  réglages d'une feuille à toutes les feuilles pas encore traitées.
 - **Profilage automatique** : type de chaque colonne (numérique, texte, date,
   booléen), valeurs manquantes, valeurs uniques, min/max/moyenne/médiane, etc.
 - **Nettoyage & apurement** :
@@ -36,7 +41,10 @@ générées) puis exportez le tout en **XLSX**, **PDF** ou **Word**.
     graphique observé/prédit.
 - **Observations** générées automatiquement en français.
 - **Exports** : Excel (données nettoyées + profil + corrélations + observations),
-  PDF et Word (rapport complet).
+  PDF et Word (rapport complet). Pour un classeur multi-feuilles, l'export
+  **regroupe toutes les feuilles déjà nettoyées en un seul fichier** : un
+  onglet de données par feuille dans l'Excel, une section par feuille dans le
+  PDF et le Word.
 
 ## Stack technique
 
@@ -111,27 +119,29 @@ vercel --prod   # déploiement en production
 ```
 app/
   layout.tsx        # métadonnées + layout racine
-  page.tsx          # orchestrateur (upload → nettoyage → analyse → export)
+  page.tsx          # orchestrateur (upload → par feuille : nettoyage → analyse → export groupé)
   globals.css       # thème (clair/sombre) et styles
 components/
-  FileUpload.tsx    # zone de chargement
+  FileUpload.tsx    # zone de chargement (renvoie toutes les feuilles du fichier)
+  SheetTabs.tsx     # navigation entre les feuilles d'un classeur multi-feuilles
   DataTable.tsx     # aperçu tabulaire
   ProfileView.tsx   # profil du jeu de données
   CleaningPanel.tsx # options de nettoyage
   Charts.tsx        # graphiques (Recharts)
   MLPanel.tsx       # UI clustering k-means & régression linéaire
-  ExportBar.tsx     # boutons d'export
+  ExportBar.tsx     # boutons d'export (regroupe les feuilles nettoyées)
 lib/
-  types.ts          # types partagés
-  parse.ts          # lecture CSV / Excel
+  types.ts          # types partagés (dont SheetInput / WorkbookInput / SheetState)
+  parse.ts          # lecture CSV / Excel (toutes feuilles)
   stats.ts          # inférence de type + fonctions statistiques
   profile.ts        # profilage des colonnes
   clean.ts          # pipeline de nettoyage / apurement
   analyze.ts        # EDA, corrélations, observations
   ml.ts             # clustering k-means & régression linéaire (OLS)
-  export-xlsx.ts    # export Excel
-  export-pdf.ts     # export PDF
-  export-docx.ts    # export Word
+  save-file.ts      # déclenchement robuste du téléchargement (file-saver)
+  export-xlsx.ts    # export Excel (multi-feuilles)
+  export-pdf.ts     # export PDF (multi-feuilles)
+  export-docx.ts    # export Word (multi-feuilles)
 exemples/
   exemple_donnees.csv
 ```

@@ -11,6 +11,7 @@ import {
   Wand2,
 } from "lucide-react";
 import FileUpload from "@/components/FileUpload";
+import SheetTabs from "@/components/SheetTabs";
 import DataTable from "@/components/DataTable";
 import ProfileView from "@/components/ProfileView";
 import CleaningPanel from "@/components/CleaningPanel";
@@ -22,61 +23,109 @@ import { cleanDataset } from "@/lib/clean";
 import { analyzeDataset } from "@/lib/analyze";
 import {
   DEFAULT_CLEANING,
-  type Analysis,
   type CleaningOptions,
-  type CleaningResult,
-  type Dataset,
+  type SheetState,
+  type WorkbookInput,
 } from "@/lib/types";
 
-type Stage = "upload" | "clean" | "results";
+type Stage = "upload" | "workspace";
 
 export default function Home() {
-  const [dataset, setDataset] = useState<Dataset | null>(null);
-  const [options, setOptions] = useState<CleaningOptions>(DEFAULT_CLEANING);
-  const [result, setResult] = useState<CleaningResult | null>(null);
-  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [workbook, setWorkbook] = useState<WorkbookInput | null>(null);
+  const [sheets, setSheets] = useState<SheetState[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [stage, setStage] = useState<Stage>("upload");
   const [working, setWorking] = useState(false);
 
+  const active = sheets[activeIndex] ?? null;
+
   const rawProfile = useMemo(
-    () => (dataset ? profileDataset(dataset) : null),
-    [dataset],
+    () => (active ? profileDataset(active.dataset) : null),
+    [active],
   );
 
-  const onLoaded = (ds: Dataset) => {
-    setDataset(ds);
-    setResult(null);
-    setAnalysis(null);
-    setOptions(DEFAULT_CLEANING);
-    setStage("clean");
+  const onLoaded = (wb: WorkbookInput) => {
+    setWorkbook(wb);
+    setSheets(
+      wb.sheets.map((s) => ({
+        name: s.name,
+        dataset: s.dataset,
+        options: DEFAULT_CLEANING,
+        result: null,
+        analysis: null,
+      })),
+    );
+    setActiveIndex(0);
+    setStage("workspace");
   };
 
-  const runPipeline = () => {
-    if (!dataset) return;
+  const setActiveOptions = (opts: CleaningOptions) => {
+    setSheets((prev) =>
+      prev.map((s, i) => (i === activeIndex ? { ...s, options: opts } : s)),
+    );
+  };
+
+  // Nettoie uniquement la feuille active, avec ses propres réglages.
+  const runActive = () => {
     setWorking(true);
-    // Laisse le spinner s'afficher avant le calcul synchrone.
     setTimeout(() => {
-      const res = cleanDataset(dataset, options);
-      const ana = analyzeDataset(res.dataset);
-      setResult(res);
-      setAnalysis(ana);
-      setStage("results");
+      setSheets((prev) =>
+        prev.map((s, i) => {
+          if (i !== activeIndex) return s;
+          const res = cleanDataset(s.dataset, s.options);
+          const ana = analyzeDataset(res.dataset);
+          return { ...s, result: res, analysis: ana };
+        }),
+      );
       setWorking(false);
       window.scrollTo({ top: 0, behavior: "smooth" });
     }, 30);
   };
 
+  // Applique les réglages de la feuille active à toutes les feuilles pas
+  // encore nettoyées et les nettoie en une fois. Chaque feuille garde un
+  // résultat et une analyse indépendants ; c'est une commodité de saisie,
+  // pas une fusion des données.
+  const runAllPendingWithActiveOptions = () => {
+    if (!active) return;
+    const opts = active.options;
+    setWorking(true);
+    setTimeout(() => {
+      setSheets((prev) =>
+        prev.map((s) => {
+          if (s.result !== null) return s;
+          const res = cleanDataset(s.dataset, opts);
+          const ana = analyzeDataset(res.dataset);
+          return { ...s, options: opts, result: res, analysis: ana };
+        }),
+      );
+      setWorking(false);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }, 30);
+  };
+
+  // Revient au panneau de nettoyage pour la feuille active (garde ses réglages).
+  const adjustActive = () => {
+    setSheets((prev) =>
+      prev.map((s, i) => (i === activeIndex ? { ...s, result: null, analysis: null } : s)),
+    );
+  };
+
   const reset = () => {
-    setDataset(null);
-    setResult(null);
-    setAnalysis(null);
+    setWorkbook(null);
+    setSheets([]);
+    setActiveIndex(0);
     setStage("upload");
   };
 
+  const cleanedSheets = sheets.filter((s) => s.result !== null && s.analysis !== null);
+  const otherPendingCount = sheets.filter(
+    (s, i) => i !== activeIndex && s.result === null,
+  ).length;
+
   const steps: { key: Stage; label: string }[] = [
     { key: "upload", label: "Charger" },
-    { key: "clean", label: "Nettoyer & apurer" },
-    { key: "results", label: "Analyser & exporter" },
+    { key: "workspace", label: "Nettoyer, analyser & exporter" },
   ];
   const stageIndex = steps.findIndex((s) => s.key === stage);
 
@@ -115,141 +164,185 @@ export default function Home() {
 
         {stage === "upload" && <FileUpload onLoaded={onLoaded} />}
 
-        {stage === "clean" && dataset && rawProfile && (
+        {stage === "workspace" && workbook && active && rawProfile && (
           <>
-            <div className="card">
-              <h2>
-                <Eye size={20} /> Aperçu — {dataset.fileName}
-              </h2>
-              <p className="subtitle">
-                Voici comment le fichier a été interprété. Vérifiez les types
-                détectés avant de nettoyer.
-              </p>
-              <ProfileView profile={rawProfile} />
-              <div className="section-title">Données brutes</div>
-              <DataTable dataset={dataset} />
-            </div>
-
-            <div className="card">
-              <h2>
-                <Wand2 size={20} /> Options de nettoyage & apurement
-              </h2>
-              <p className="subtitle">
-                Ces réglages par défaut conviennent à la plupart des fichiers.
-                Ajustez-les si besoin.
-              </p>
-              <CleaningPanel options={options} onChange={setOptions} />
-              <div className="btn-row">
-                <button
-                  className="btn primary"
-                  onClick={runPipeline}
-                  disabled={working}
-                >
-                  {working ? <span className="spinner" /> : <Sparkles size={18} />}
-                  Nettoyer et analyser
-                </button>
-                <button className="btn" onClick={reset} disabled={working}>
-                  Changer de fichier
-                </button>
-              </div>
-            </div>
-          </>
-        )}
-
-        {stage === "results" && result && analysis && (
-          <>
-            <div className="card">
-              <h2>
-                <CheckCircle2 size={20} color="var(--success)" /> Nettoyage
-                effectué
-              </h2>
-              <p className="subtitle">
-                {result.rowsBefore.toLocaleString("fr-FR")} →{" "}
-                {result.rowsAfter.toLocaleString("fr-FR")} ligne(s) après
-                traitement.
-              </p>
-              <ul className="steps-log">
-                {result.steps.map((s, i) => (
-                  <li key={i}>
-                    <span className="ico">
-                      <CheckCircle2 size={16} />
-                    </span>
-                    <span>
-                      <span className="t">{s.label}</span>
-                      <br />
-                      <span className="d">{s.detail}</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="card">
-              <h2>
-                <Sparkles size={20} /> Observations & appréciations
-              </h2>
-              <ul className="obs">
-                {analysis.observations.map((o, i) => (
-                  <li key={i}>{o}</li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="card">
-              <h2>
-                <Database size={20} /> Profil après nettoyage
-              </h2>
-              <ProfileView profile={analysis.profile} />
-            </div>
-
-            <div className="card">
-              <h2>
-                <BarChart3 size={20} /> Analyse visuelle
-              </h2>
-              <p className="subtitle">
-                Distributions des variables numériques, fréquences des variables
-                catégorielles et corrélations.
-              </p>
-              <Charts analysis={analysis} />
-            </div>
-
-            <div className="card">
-              <h2>
-                <Brain size={20} /> Machine learning — clustering & régression
-              </h2>
-              <p className="subtitle">
-                Explorez des groupes homogènes (k-means) ou modélisez une
-                variable numérique à partir des autres (régression linéaire).
-                Tout est calculé dans votre navigateur, comme le reste de
-                DataLab.
-              </p>
-              <MLPanel
-                key={dataset?.fileName + ":" + result.rowsAfter}
-                dataset={result.dataset}
-                profile={analysis.profile}
+            {sheets.length > 1 && (
+              <SheetTabs
+                sheets={sheets}
+                activeIndex={activeIndex}
+                onSelect={setActiveIndex}
               />
-            </div>
+            )}
 
-            <div className="card">
-              <h2>
-                <Eye size={20} /> Données nettoyées
-              </h2>
-              <DataTable dataset={result.dataset} />
-            </div>
+            {active.result === null || active.analysis === null ? (
+              <>
+                <div className="card">
+                  <h2>
+                    <Eye size={20} /> Aperçu — {workbook.fileName}
+                    {sheets.length > 1 ? ` · ${active.name}` : ""}
+                  </h2>
+                  <p className="subtitle">
+                    Voici comment le fichier a été interprété. Vérifiez les
+                    types détectés avant de nettoyer.
+                  </p>
+                  <ProfileView profile={rawProfile} />
+                  <div className="section-title">Données brutes</div>
+                  <DataTable dataset={active.dataset} />
+                </div>
+
+                <div className="card">
+                  <h2>
+                    <Wand2 size={20} /> Options de nettoyage & apurement
+                    {sheets.length > 1 ? ` — ${active.name}` : ""}
+                  </h2>
+                  <p className="subtitle">
+                    Ces réglages par défaut conviennent à la plupart des
+                    fichiers. Ajustez-les si besoin. Chaque feuille a ses
+                    propres réglages et son propre résultat.
+                  </p>
+                  <CleaningPanel options={active.options} onChange={setActiveOptions} />
+                  <div className="btn-row">
+                    <button
+                      className="btn primary"
+                      onClick={runActive}
+                      disabled={working}
+                    >
+                      {working ? <span className="spinner" /> : <Sparkles size={18} />}
+                      Nettoyer et analyser cette feuille
+                    </button>
+                    {otherPendingCount > 0 && (
+                      <button
+                        className="btn"
+                        onClick={runAllPendingWithActiveOptions}
+                        disabled={working}
+                      >
+                        Appliquer ces réglages aux {otherPendingCount} autre(s)
+                        feuille(s) non nettoyée(s)
+                      </button>
+                    )}
+                    <button className="btn" onClick={reset} disabled={working}>
+                      Changer de fichier
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="card">
+                  <h2>
+                    <CheckCircle2 size={20} color="var(--success)" /> Nettoyage
+                    effectué{sheets.length > 1 ? ` — ${active.name}` : ""}
+                  </h2>
+                  <p className="subtitle">
+                    {active.result.rowsBefore.toLocaleString("fr-FR")} →{" "}
+                    {active.result.rowsAfter.toLocaleString("fr-FR")} ligne(s)
+                    après traitement.
+                  </p>
+                  <ul className="steps-log">
+                    {active.result.steps.map((s, i) => (
+                      <li key={i}>
+                        <span className="ico">
+                          <CheckCircle2 size={16} />
+                        </span>
+                        <span>
+                          <span className="t">{s.label}</span>
+                          <br />
+                          <span className="d">{s.detail}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="card">
+                  <h2>
+                    <Sparkles size={20} /> Observations & appréciations
+                  </h2>
+                  <ul className="obs">
+                    {active.analysis.observations.map((o, i) => (
+                      <li key={i}>{o}</li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="card">
+                  <h2>
+                    <Database size={20} /> Profil après nettoyage
+                  </h2>
+                  <ProfileView profile={active.analysis.profile} />
+                </div>
+
+                <div className="card">
+                  <h2>
+                    <BarChart3 size={20} /> Analyse visuelle
+                  </h2>
+                  <p className="subtitle">
+                    Distributions des variables numériques, fréquences des
+                    variables catégorielles et corrélations.
+                  </p>
+                  <Charts analysis={active.analysis} />
+                </div>
+
+                <div className="card">
+                  <h2>
+                    <Brain size={20} /> Machine learning — clustering & régression
+                  </h2>
+                  <p className="subtitle">
+                    Explorez des groupes homogènes (k-means) ou modélisez une
+                    variable numérique à partir des autres (régression
+                    linéaire). Tout est calculé dans votre navigateur, comme
+                    le reste de DataLab.
+                  </p>
+                  <MLPanel
+                    key={workbook.fileName + ":" + active.name + ":" + active.result.rowsAfter}
+                    dataset={active.result.dataset}
+                    profile={active.analysis.profile}
+                  />
+                </div>
+
+                <div className="card">
+                  <h2>
+                    <Eye size={20} /> Données nettoyées
+                  </h2>
+                  <DataTable dataset={active.result.dataset} />
+                  <div className="btn-row">
+                    <button className="btn" onClick={adjustActive}>
+                      Ajuster le nettoyage de cette feuille
+                    </button>
+                    <button className="btn" onClick={reset}>
+                      Nouveau fichier
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="card">
               <h2>
                 <Sparkles size={20} /> Exporter les résultats
+                {sheets.length > 1 ? " — toutes feuilles" : ""}
               </h2>
-              <ExportBar dataset={result.dataset} analysis={analysis} />
-              <div className="btn-row">
-                <button className="btn" onClick={() => setStage("clean")}>
-                  Ajuster le nettoyage
-                </button>
-                <button className="btn" onClick={reset}>
-                  Nouveau fichier
-                </button>
-              </div>
+              {sheets.length > 1 && (
+                <p className="subtitle">
+                  {cleanedSheets.length}/{sheets.length} feuille(s) nettoyée(s).
+                  L&apos;export regroupe toutes les feuilles déjà nettoyées en
+                  un seul fichier.
+                </p>
+              )}
+              {cleanedSheets.length === 0 ? (
+                <p className="hint">
+                  Nettoyez au moins une feuille pour activer l&apos;export.
+                </p>
+              ) : (
+                <ExportBar
+                  fileName={workbook.fileName}
+                  sheets={cleanedSheets.map((s) => ({
+                    name: s.name,
+                    dataset: s.result!.dataset,
+                    analysis: s.analysis!,
+                  }))}
+                />
+              )}
             </div>
           </>
         )}
