@@ -16,8 +16,10 @@ function normalizeCell(v: unknown): CellValue {
 // hypothèse préalable sur la présence d'un en-tête). Utilisé aussi bien pour
 // le CSV que pour l'Excel : c'est le seul endroit qui décide des colonnes.
 function buildDatasetFromRows(rawRows: unknown[][], fileName: string): Dataset {
-  const { headers, headerRowPresent } = resolveHeaders(rawRows);
-  const dataRows = headerRowPresent ? rawRows.slice(1) : rawRows;
+  const { headers, headerRowPresent, dataStartIndex } = resolveHeaders(rawRows);
+  // Les lignes avant dataStartIndex (titres, sous-titres, tuiles de KPI de
+  // tableau de bord…) sont écartées : ce ne sont pas des données.
+  const dataRows = rawRows.slice(dataStartIndex);
 
   // Dédoublonne les noms de colonnes identiques en gardant l'ordre d'origine.
   const seen = new Map<string, number>();
@@ -75,9 +77,28 @@ export async function parseExcel(
   return buildDatasetFromRows(rawRowsFromSheet(XLSX, wb.Sheets[wb.SheetNames[0]]), fileName);
 }
 
-// Lit toutes les feuilles d'un classeur Excel. Les feuilles vides (sans
-// colonne ou sans ligne exploitable — onglets de garde, feuilles masquées
-// laissées vides, etc.) sont ignorées.
+// En dessous de cette moyenne de cellules remplies par ligne, une feuille
+// n'est pas un tableau de données exploitable — plutôt une page d'accueil,
+// un tableau de bord visuel ou une fiche de paramètres (quelques libellés
+// épars, pas des enregistrements répétés). Calibré sur des classeurs Excel
+// réels : les feuilles décoratives tournent autour de 0,4 à 1,4 en moyenne,
+// les vraies tables de données au-delà de 3 dès qu'on a retiré les lignes
+// de titre grâce à resolveHeaders.
+const MIN_AVG_FILLED_PER_ROW = 2.5;
+
+function looksTabular(dataset: Dataset): boolean {
+  if (dataset.columns.length === 0 || dataset.rows.length === 0) return false;
+  const totalFilled = dataset.rows.reduce(
+    (sum, r) => sum + dataset.columns.filter((c) => r[c] !== null).length,
+    0,
+  );
+  return totalFilled / dataset.rows.length >= MIN_AVG_FILLED_PER_ROW;
+}
+
+// Lit toutes les feuilles d'un classeur Excel. Les feuilles vides ou non
+// tabulaires (onglets de garde, pages d'accueil, tableaux de bord visuels,
+// fiches de paramètres…) sont ignorées : seules les feuilles qui ressemblent
+// à un vrai tableau de données sont proposées au nettoyage.
 export async function parseExcelAllSheets(
   buffer: ArrayBuffer,
   fileName: string,
@@ -90,7 +111,7 @@ export async function parseExcelAllSheets(
       rawRowsFromSheet(XLSX, wb.Sheets[sheetName]),
       fileName,
     );
-    if (dataset.columns.length > 0 && dataset.rows.length > 0) {
+    if (looksTabular(dataset)) {
       sheets.push({ name: sheetName, dataset });
     }
   }

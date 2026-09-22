@@ -30,8 +30,9 @@ const SECTORS: SectorDef[] = [
     label: "Ventes / Commerce",
     keywords: [
       "produit", "prix", "montant", "quantite", "vente", "client", "commande",
-      "panier", "remise", "categorie", "chiffre affaire", "ca", "facture",
-      "reference produit", "boutique", "magasin",
+      "panier", "remise", "categorie", "chiffre affaire", "facture",
+      "reference produit", "boutique", "magasin", "achat", "encaisse",
+      "impaye", "marge",
     ],
   },
   {
@@ -40,7 +41,8 @@ const SECTORS: SectorDef[] = [
     keywords: [
       "credit", "debit", "solde", "tva", "compte", "budget", "depense",
       "recette", "taux", "interet", "echeance", "devise", "transaction",
-      "virement", "bilan",
+      "virement", "bilan", "libelle", "ecriture comptable", "journal",
+      "charge",
     ],
   },
   {
@@ -106,8 +108,14 @@ export interface SectorMatch {
   keyColumns: string[];
 }
 
-export function detectSector(columns: string[]): SectorMatch {
+// Le nom de la feuille (ex. "Clients", "Fournisseurs") est souvent bien plus
+// révélateur que des noms de colonnes génériques ("Nom", "Contact") : un
+// hit sur le nom de feuille compte donc double.
+const SHEET_NAME_WEIGHT = 2;
+
+export function detectSector(columns: string[], sheetName?: string): SectorMatch {
   const normCols = columns.map((c) => ({ raw: c, norm: normalize(c) }));
+  const normSheet = sheetName ? normalize(sheetName) : "";
 
   let best: { def: SectorDef; score: number; matched: string[]; cols: Set<string> } | null =
     null;
@@ -123,6 +131,10 @@ export function detectSector(columns: string[]): SectorMatch {
         score += 1;
         matched.push(kw);
         cols.add(hit.raw);
+      }
+      if (normSheet && normSheet.includes(nkw)) {
+        score += SHEET_NAME_WEIGHT;
+        if (!matched.includes(kw)) matched.push(kw);
       }
     }
     if (!best || score > best.score) {
@@ -154,13 +166,15 @@ export function detectSector(columns: string[]): SectorMatch {
 }
 
 // Point d'entrée utilisé par l'UI : enveloppe detectSector dans le format
-// ContextResult commun aux deux sources (heuristique / IA).
-export function detectContextHeuristic(columns: string[]): ContextResult {
-  const match = detectSector(columns);
+// ContextResult commun aux deux sources (heuristique / IA). `sheetName` est
+// facultatif mais souvent le signal le plus fiable (ex. un onglet nommé
+// "Clients" ou "Fournisseurs" dont les colonnes elles-mêmes sont génériques).
+export function detectContextHeuristic(columns: string[], sheetName?: string): ContextResult {
+  const match = detectSector(columns, sheetName);
   const rationale =
     match.sector === "inconnu"
-      ? "Aucun mot-clé de secteur connu n'a été reconnu dans les noms de colonnes."
-      : `Détecté à partir de mot(s)-clé(s) trouvé(s) dans les noms de colonnes : ${match.matchedKeywords.join(", ")}.`;
+      ? "Aucun mot-clé de secteur connu n'a été reconnu dans les noms de colonnes ou le nom de la feuille."
+      : `Détecté à partir de mot(s)-clé(s) trouvé(s) dans les noms de colonnes et/ou le nom de la feuille : ${match.matchedKeywords.join(", ")}.`;
 
   return {
     source: "heuristic",

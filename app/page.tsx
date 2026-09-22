@@ -48,7 +48,7 @@ export default function Home() {
   );
 
   const heuristicContext = useMemo(
-    () => (active ? detectContextHeuristic(active.dataset.columns) : null),
+    () => (active ? detectContextHeuristic(active.dataset.columns, active.name) : null),
     [active],
   );
   const effectiveContext = active?.aiContext ?? heuristicContext;
