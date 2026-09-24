@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { UploadCloud, FileSpreadsheet } from "lucide-react";
-import { parseFile } from "@/lib/parse";
+import { ACCEPTED_EXTENSIONS, parseFile } from "@/lib/parse";
 import type { WorkbookInput } from "@/lib/types";
 
 interface Props {
@@ -20,12 +20,8 @@ export default function FileUpload({ onLoaded }: Props) {
       setError(null);
       setLoading(true);
       try {
-        const wb = await parseFile(file);
-        if (wb.sheets.length === 0) {
-          setError("Le fichier ne contient aucune ligne de données exploitable.");
-        } else {
-          onLoaded(wb);
-        }
+        // parseFile lève une erreur explicite si le fichier n'a aucune donnée.
+        onLoaded(await parseFile(file));
       } catch (e) {
         setError(e instanceof Error ? e.message : "Erreur de lecture du fichier.");
       } finally {
@@ -41,8 +37,9 @@ export default function FileUpload({ onLoaded }: Props) {
         <FileSpreadsheet size={20} /> Charger un fichier
       </h2>
       <p className="subtitle">
-        Formats acceptés : CSV, XLS, XLSX (classeurs multi-feuilles pris en
-        charge, chaque feuille est traitée séparément). Vos données restent
+        Formats acceptés : CSV, TSV, TXT, Excel (XLSX, XLSM avec macros, XLS,
+        XLSB, modèles XLTX/XLTM) et ODS. Les classeurs multi-feuilles sont pris
+        en charge, chaque feuille est traitée séparément. Vos données restent
         dans votre navigateur — rien n&apos;est envoyé sur un serveur.
       </p>
 
@@ -69,7 +66,7 @@ export default function FileUpload({ onLoaded }: Props) {
         <input
           ref={inputRef}
           type="file"
-          accept=".csv,.txt,.xls,.xlsx"
+          accept={ACCEPTED_EXTENSIONS.join(",")}
           style={{ display: "none" }}
           onChange={(e) => {
             const f = e.target.files?.[0];

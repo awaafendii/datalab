@@ -190,6 +190,16 @@ export default function Home() {
               />
             )}
 
+            {workbook.skippedSheets.length > 0 && (
+              <p className="hint" style={{ marginTop: -8, marginBottom: 16 }}>
+                {workbook.skippedSheets.length > 1
+                  ? "Feuilles ignorées car vides"
+                  : "Feuille ignorée car vide"}{" "}
+                ou sans tableau de données exploitable :{" "}
+                {workbook.skippedSheets.join(", ")}.
+              </p>
+            )}
+
             {heuristicContext && (
               <ContextPanel
                 dataset={active.dataset}

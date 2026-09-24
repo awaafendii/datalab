@@ -28,6 +28,10 @@ export interface SheetInput {
 export interface WorkbookInput {
   fileName: string;
   sheets: SheetInput[];
+  // Feuilles du classeur non proposées au nettoyage (vides, ou sans tableau
+  // de données : page d'accueil, tableau de bord visuel…). Affichées à
+  // l'utilisateur pour qu'aucune feuille ne disparaisse sans explication.
+  skippedSheets: string[];
 }
 
 export interface NumericStats {

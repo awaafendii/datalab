@@ -13,12 +13,16 @@ générées) puis exportez le tout en **XLSX**, **PDF** ou **Word**.
 
 ## Fonctionnalités
 
-- **Chargement** CSV / XLS / XLSX (glisser-déposer ou parcourir), **y compris
-  les classeurs Excel multi-feuilles** : chaque feuille est détectée, puis
-  nettoyée, analysée et modélisée **indépendamment** (ses propres réglages,
-  son propre profil, ses propres observations). Les feuilles vides sont
-  ignorées automatiquement. Un bouton permet d'appliquer en un clic les
-  réglages d'une feuille à toutes les feuilles pas encore traitées.
+- **Chargement** CSV / TSV / TXT, Excel (XLSX, XLSM avec macros, XLS, XLSB,
+  modèles XLTX / XLTM) et ODS (glisser-déposer ou parcourir). Les CSV
+  enregistrés par Excel en Windows-1252 gardent leurs accents ; les dates
+  Excel sont converties au format `AAAA-MM-JJ`. **Classeurs multi-feuilles** :
+  chaque feuille est détectée, puis nettoyée, analysée et modélisée
+  **indépendamment** (ses propres réglages, son propre profil, ses propres
+  observations). Les feuilles vides ou sans tableau de données (page
+  d'accueil, tableau de bord visuel…) sont ignorées et listées à l'écran. Un
+  bouton permet d'appliquer en un clic les réglages d'une feuille à toutes les
+  feuilles pas encore traitées.
 - **Profilage automatique** : type de chaque colonne (numérique, texte, date,
   booléen), valeurs manquantes, valeurs uniques, min/max/moyenne/médiane, etc.
 - **Compréhension du contexte** (nouveau) :
