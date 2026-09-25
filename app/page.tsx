@@ -10,6 +10,7 @@ import {
   Sparkles,
   Wand2,
 } from "lucide-react";
+import AppNav from "@/components/AppNav";
 import FileUpload from "@/components/FileUpload";
 import SheetTabs from "@/components/SheetTabs";
 import ContextPanel from "@/components/ContextPanel";
@@ -155,6 +156,7 @@ export default function Home() {
             </span>
             DataLab
           </div>
+          <AppNav />
           <span className="tag">Analyse de données · 100% navigateur (sauf IA optionnelle)</span>
         </div>
       </header>

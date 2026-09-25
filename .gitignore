@@ -29,3 +29,17 @@ next-env.d.ts
 
 # vercel
 .vercel
+
+# worker pdf.js copié depuis node_modules avant dev/build (scripts/copy-pdf-worker.mjs)
+/public/pdf.worker.min.mjs
+
+# Documents de référence (rapports, CDMT, loi de finances…) : sensibles,
+# jamais versionnés. Seul le référentiel chiffré dérivé de la loi
+# (lib/documents/lf-data.ts) est suivi.
+/*.docx
+/*.doc
+/*.pdf
+/*.xlsx
+/*.xlsm
+/*.xls
+/*.ods
