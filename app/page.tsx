@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   Brain,
   CheckCircle2,
   Database,
   Eye,
+  Palette,
   Sparkles,
   Wand2,
 } from "lucide-react";
@@ -17,13 +18,27 @@ import ContextPanel from "@/components/ContextPanel";
 import DataTable from "@/components/DataTable";
 import ProfileView from "@/components/ProfileView";
 import CleaningPanel from "@/components/CleaningPanel";
-import Charts from "@/components/Charts";
+import Charts, { type ChartPreset } from "@/components/Charts";
+import ChartBuilder from "@/components/charts/ChartBuilder";
 import MLPanel from "@/components/MLPanel";
 import ExportBar from "@/components/ExportBar";
+import SessionBar from "@/components/SessionBar";
+import {
+  clearSession,
+  loadSession,
+  saveState,
+  saveWorkbook,
+  sessionEnabled,
+  sessionErrorMessage,
+  setSessionEnabled,
+} from "@/lib/session";
 import { profileDataset } from "@/lib/profile";
 import { cleanDataset } from "@/lib/clean";
 import { analyzeDataset } from "@/lib/analyze";
 import { detectContextHeuristic } from "@/lib/sectors";
+import { createChart } from "@/lib/charts/catalog";
+import { columnInfos } from "@/lib/charts/data";
+import type { ChartConfig } from "@/lib/charts/types";
 import {
   DEFAULT_CLEANING,
   type CleaningOptions,
@@ -40,8 +55,103 @@ export default function Home() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [stage, setStage] = useState<Stage>("upload");
   const [working, setWorking] = useState(false);
+  // Graphique à ouvrir dans le créateur (après « Personnaliser »).
+  const [chartFocus, setChartFocus] = useState<string | null>(null);
+  // Session mémorisée dans le navigateur (lib/session.ts).
+  const [persist, setPersist] = useState(true);
+  const [restoring, setRestoring] = useState(true);
+  const [restoredAt, setRestoredAt] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const savedWorkbook = useRef<WorkbookInput | null>(null);
 
   const active = sheets[activeIndex] ?? null;
+
+  // Au chargement de la page : reprend la session mémorisée. Les résultats
+  // de nettoyage et d'analyse sont recalculés à partir des réglages.
+  useEffect(() => {
+    const on = sessionEnabled();
+    setPersist(on);
+    if (!on) {
+      setRestoring(false);
+      return;
+    }
+    let cancelled = false;
+    loadSession()
+      .then((saved) => {
+        if (cancelled || !saved) return;
+        const { workbook: wb, state } = saved;
+        const restored: SheetState[] = state.sheets.map((s, i) => {
+          const dataset = wb.sheets[i].dataset;
+          const result = s.cleaned ? cleanDataset(dataset, s.options) : null;
+          return {
+            name: s.name,
+            dataset,
+            options: s.options,
+            result,
+            analysis: result ? analyzeDataset(result.dataset) : null,
+            aiContext: s.aiContext,
+            charts: s.charts ?? [],
+          };
+        });
+        savedWorkbook.current = wb;
+        setWorkbook(wb);
+        setSheets(restored);
+        setActiveIndex(Math.min(Math.max(state.activeIndex, 0), restored.length - 1));
+        setStage("workspace");
+        setRestoredAt(state.savedAt);
+      })
+      .catch(() => {
+        // stockage indisponible : on démarre simplement sans session
+      })
+      .finally(() => {
+        if (!cancelled) setRestoring(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Enregistre la session à chaque modification (après une courte pause).
+  // Le classeur, volumineux, n'est réécrit que si un autre fichier est chargé.
+  useEffect(() => {
+    if (restoring || !persist || !workbook) return;
+    const timer = setTimeout(async () => {
+      try {
+        if (savedWorkbook.current !== workbook) {
+          await saveWorkbook(workbook);
+          savedWorkbook.current = workbook;
+        }
+        await saveState({
+          version: 1,
+          savedAt: new Date().toISOString(),
+          fileName: workbook.fileName,
+          activeIndex,
+          sheets: sheets.map((s) => ({
+            name: s.name,
+            options: s.options,
+            cleaned: s.result !== null,
+            aiContext: s.aiContext,
+            charts: s.charts,
+          })),
+        });
+        setSessionError(null);
+      } catch (e) {
+        setSessionError(sessionErrorMessage(e));
+      }
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [workbook, sheets, activeIndex, persist, restoring]);
+
+  const togglePersist = (on: boolean) => {
+    setSessionEnabled(on);
+    setPersist(on);
+    setSessionError(null);
+    if (!on) {
+      savedWorkbook.current = null;
+      setRestoredAt(null);
+      clearSession();
+    }
+  };
 
   const rawProfile = useMemo(
     () => (active ? profileDataset(active.dataset) : null),
@@ -64,6 +174,7 @@ export default function Home() {
         result: null,
         analysis: null,
         aiContext: null,
+        charts: [],
       })),
     );
     setActiveIndex(0);
@@ -74,6 +185,28 @@ export default function Home() {
     setSheets((prev) =>
       prev.map((s, i) => (i === activeIndex ? { ...s, aiContext: ctx } : s)),
     );
+  };
+
+  const setActiveCharts = (charts: ChartConfig[]) => {
+    setSheets((prev) =>
+      prev.map((s, i) => (i === activeIndex ? { ...s, charts } : s)),
+    );
+  };
+
+  // « Personnaliser » un graphique de l'analyse automatique : il est recopié
+  // dans le créateur de graphiques, où tous ses réglages sont modifiables.
+  const customizeChart = (preset: ChartPreset) => {
+    if (!active?.analysis) return;
+    const cfg = createChart(
+      preset.type,
+      columnInfos(active.analysis.profile),
+      effectiveContext?.keyColumns ?? [],
+      preset.roles,
+      {},
+      false,
+    );
+    setActiveCharts([...active.charts, cfg]);
+    setChartFocus(cfg.id);
   };
 
   const setActiveOptions = (opts: CleaningOptions) => {
@@ -133,6 +266,9 @@ export default function Home() {
     setSheets([]);
     setActiveIndex(0);
     setStage("upload");
+    setRestoredAt(null);
+    savedWorkbook.current = null;
+    clearSession();
   };
 
   const cleanedSheets = sheets.filter((s) => s.result !== null && s.analysis !== null);
@@ -180,10 +316,27 @@ export default function Home() {
           ))}
         </div>
 
-        {stage === "upload" && <FileUpload onLoaded={onLoaded} />}
+        {stage === "upload" &&
+          (restoring ? (
+            <div className="card">
+              <p className="hint" style={{ margin: 0 }}>
+                <span className="spinner dark" /> Recherche d&apos;une session mémorisée…
+              </p>
+            </div>
+          ) : (
+            <FileUpload onLoaded={onLoaded} />
+          ))}
 
         {stage === "workspace" && workbook && active && rawProfile && (
           <>
+            <SessionBar
+              persist={persist}
+              restoredAt={restoredAt}
+              error={sessionError}
+              onTogglePersist={togglePersist}
+              onClear={reset}
+            />
+
             {sheets.length > 1 && (
               <SheetTabs
                 sheets={sheets}
@@ -317,7 +470,32 @@ export default function Home() {
                     Distributions des variables numériques, fréquences des
                     variables catégorielles et corrélations.
                   </p>
-                  <Charts analysis={active.analysis} />
+                  <Charts analysis={active.analysis} onCustomize={customizeChart} />
+                </div>
+
+                <div className="card">
+                  <h2>
+                    <Palette size={20} /> Créateur de graphiques
+                  </h2>
+                  <p className="subtitle">
+                    35 types de graphiques — ceux de plotly, seaborn et
+                    matplotlib en Python — entièrement paramétrables comme dans
+                    Excel ou Power BI : colonnes, calculs, couleurs, titres,
+                    axes, légende, étiquettes, format des nombres. Export PNG,
+                    SVG ou JPEG.
+                  </p>
+                  <ChartBuilder
+                    dataset={active.result.dataset}
+                    profile={active.analysis.profile}
+                    suggestedColumns={effectiveContext?.keyColumns}
+                    charts={active.charts}
+                    onChange={setActiveCharts}
+                    focusId={chartFocus}
+                    baseName={
+                      workbook.fileName.replace(/\.[^.]+$/, "") +
+                      (sheets.length > 1 ? `-${active.name}` : "")
+                    }
+                  />
                 </div>
 
                 <div className="card">
@@ -378,6 +556,7 @@ export default function Home() {
                     name: s.name,
                     dataset: s.result!.dataset,
                     analysis: s.analysis!,
+                    charts: s.charts,
                   }))}
                 />
               )}
@@ -387,8 +566,9 @@ export default function Home() {
 
         <p className="foot">
           DataLab — vos données ne quittent jamais votre navigateur, sauf si
-          vous activez explicitement l&apos;analyse IA optionnelle. Nettoyage,
-          apurement, analyse et export XLSX / PDF / Word.
+          vous activez explicitement l&apos;analyse IA optionnelle. La session
+          peut être mémorisée sur cet ordinateur (désactivable à tout moment).
+          Nettoyage, apurement, analyse et export XLSX / PDF / Word.
         </p>
       </main>
     </>

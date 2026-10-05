@@ -9,7 +9,10 @@ générées) puis exportez le tout en **XLSX**, **PDF** ou **Word**.
 > optionnelle** (secteur d'activité, colonnes clés) : elle n'est déclenchée
 > que si vous cliquez explicitement dessus, et envoie alors un échantillon de
 > vos données à l'API Claude. Le nettoyage, l'analyse, le machine learning et
-> les exports restent, eux, toujours 100 % locaux.
+> les exports restent, eux, toujours 100 % locaux. La session peut être
+> mémorisée **dans le navigateur** (IndexedDB, désactivable) : rien n'est
+> envoyé, mais les données restent sur l'ordinateur tant qu'on ne les efface
+> pas — à désactiver sur un poste partagé.
 
 ## Fonctionnalités
 
@@ -49,7 +52,46 @@ générées) puis exportez le tout en **XLSX**, **PDF** ou **Word**.
     interquartile (IQR) : plafonnement (winsorisation) ou suppression.
 - **Analyse exploratoire** : statistiques descriptives, histogrammes de
   distribution, fréquences des variables catégorielles, matrice de corrélations
-  de Pearson.
+  de Pearson. Chaque graphique automatique a un lien « Personnaliser » qui le
+  recopie dans le créateur de graphiques.
+- **Créateur de graphiques** (paramétrage façon Excel / Power BI, moteur
+  [Plotly.js](https://plotly.com/javascript/) — celui de `plotly` en Python) :
+  - **37 types** : colonnes, barres, sucettes, Pareto, combiné colonnes +
+    courbe (axe secondaire), courbes, aires (empilées, 100 %), cascade,
+    chandeliers, Gantt, secteurs, anneau, treemap, sunburst, icicle,
+    entonnoir, histogramme (+ densité KDE), boîte à moustaches, violon,
+    densité, ECDF, strip, nuage de points (+ courbes de tendance linéaire,
+    polynomiale, exponentielle, logarithmique, puissance, moyenne mobile),
+    bulles, carte de chaleur, matrice de corrélation, densité 2D, matrice de
+    nuages (pairplot), coordonnées parallèles, Sankey, radar, barres
+    polaires, nuage 3D, cartes KPI, jauge, **carte choroplèthe** et **carte à
+    bulles**. La galerie indique l'équivalent Python (`px.bar`,
+    `sns.violinplot`, `go.Waterfall`, `px.choropleth`…).
+  - **Cartes géographiques**, hors ligne : 8 régions et 34 préfectures de
+    Guinée, pays d'Afrique ou du monde. Les noms sont rapprochés sans tenir
+    compte des accents, des majuscules ni de « Région de… » (`N'Zérékoré`,
+    `Région de Labé`, `GN-D`, `Côte d'Ivoire`, `RDC`, `SN`…) ; le fond est
+    choisi automatiquement d'après les valeurs, et les valeurs non reconnues
+    sont signalées. Carte à bulles par zone ou par latitude / longitude.
+  - **Données** : colonnes de chaque rôle (axe X, valeurs, légende, taille,
+    niveaux…), calcul (somme, moyenne, médiane, nombre, nombre distinct,
+    min, max), regroupement des dates (jour, mois, trimestre, année), tri,
+    Top N avec « Autres ».
+  - **Format** : 13 palettes (Excel, Power BI, Tableau, Matplotlib,
+    Seaborn…), couleur de chaque série ou catégorie, dégradés pour les
+    valeurs continues, opacité, arrière-plan, titre, police, axes (titres,
+    quadrillage, inclinaison, échelle log, bornes), légende, étiquettes de
+    données, décimales, unités d'affichage (automatique, k, M, Md), préfixe
+    et suffixe (ex. « GNF »), plus les réglages propres à chaque type.
+  - **Tableau de bord** par feuille : plusieurs graphiques, dupliquer,
+    réordonner, demi ou pleine largeur, « Appliquer ce style à tous les
+    graphiques », **graphiques recommandés** selon les colonnes, export
+    **PNG / SVG / JPEG** (toujours en thème clair, fond blanc). Les
+    graphiques sont **insérés dans les rapports PDF et Word**.
+- **Session mémorisée** : fichier, réglages de nettoyage, contexte et
+  graphiques sont retrouvés après actualisation de la page (les résultats
+  sont recalculés). Bandeau « Mémoriser sur cet ordinateur » / « Effacer et
+  recommencer ».
 - **Machine learning** (calculé en pur JavaScript, dans le navigateur) :
   - **Clustering k-means** : regroupe les lignes en k groupes homogènes à
     partir des colonnes numériques choisies (variables centrées-réduites,
@@ -61,7 +103,10 @@ générées) puis exportez le tout en **XLSX**, **PDF** ou **Word**.
     graphique observé/prédit.
 - **Observations** générées automatiquement en français.
 - **Exports** : Excel (données nettoyées + profil + corrélations + observations),
-  PDF et Word (rapport complet). Pour un classeur multi-feuilles, l'export
+  PDF et Word (rapport complet, avec les graphiques personnalisés en images
+  haute définition — option décochable). L'Excel ne contient pas les
+  graphiques : la bibliothèque SheetJS (édition communautaire) n'écrit pas
+  d'images. Pour un classeur multi-feuilles, l'export
   **regroupe toutes les feuilles déjà nettoyées en un seul fichier** : un
   onglet de données par feuille dans l'Excel, une section par feuille dans le
   PDF et le Word.
@@ -178,7 +223,26 @@ des faux positifs, que le relecteur écarte d'un clic.
 
 - [Next.js 14](https://nextjs.org/) (App Router) + React 18 + TypeScript
 - [SheetJS](https://sheetjs.com/) (lecture/écriture Excel), [PapaParse](https://www.papaparse.com/) (CSV)
-- [Recharts](https://recharts.org/) (graphiques)
+- [Recharts](https://recharts.org/) (graphiques de l'analyse automatique et du ML)
+- [Plotly.js](https://plotly.com/javascript/) (créateur de graphiques), en
+  version **modulaire** (`plotly.js/lib/core` + un module par type de trace,
+  `components/charts/plotly-runtime.ts`) : seul ce que les graphiques
+  affichés utilisent est téléchargé, en fragments séparés. Un graphique en
+  colonnes ou en secteurs charge ~1,1 Mo (~380 Ko compressés) au lieu des
+  4,6 Mo (1,45 Mo compressés) du bundle complet ; la 3D (+560 Ko), le WebGL
+  (+380 Ko) et les cartes (+230 Ko) ne sont chargés que s'ils servent. Le
+  cœur est préchargé pendant l'inactivité du navigateur dès l'ouverture de
+  l'analyse. `next.config.mjs` fait pointer `glslify` vers sa version
+  navigateur (shaders déjà compilés). Locale française :
+  `lib/charts/locale-fr.ts`.
+- Cartes : fonds Plotly (Nations Unies) et contours de la Guinée
+  ([geoBoundaries](https://www.geoboundaries.org/), d'après OCHA ROWCA / PAM,
+  licence CC BY 3.0 IGO — mention affichée sous chaque carte), servis par
+  l'application depuis `public/topojson` et `public/geo` : aucun appel
+  externe, fonctionne hors ligne. `node scripts/geo-referentiel.mjs`
+  retélécharge et régénère ces fichiers (simplification des contours,
+  centroïdes, `lib/charts/geo-data.ts`).
+- Session : IndexedDB (`lib/session.ts`), sans dépendance.
 - [jsPDF](https://github.com/parallax/jsPDF) + jspdf-autotable (PDF), [docx](https://docx.js.org/) (Word)
 - `lib/ml.ts` : clustering k-means et régression OLS implémentés à la main
   (algèbre linéaire minimale, sans dépendance), pour rester 100 % navigateur.
@@ -283,9 +347,17 @@ components/
   DataTable.tsx     # aperçu tabulaire
   ProfileView.tsx   # profil du jeu de données
   CleaningPanel.tsx # options de nettoyage
-  Charts.tsx        # graphiques (Recharts)
+  Charts.tsx        # graphiques automatiques (Recharts) + « Personnaliser »
+  charts/           # créateur de graphiques (Plotly)
+    ChartBuilder.tsx    # tableau de bord + éditeur (onglets Type / Données / Format)
+    ChartTypePicker.tsx # galerie des 37 types (icônes, équivalent Python)
+    DataPane.tsx        # colonnes par rôle, calcul, dates, tri, Top N, fond de carte
+    FormatPane.tsx      # couleurs, titres, axes, légende, étiquettes, style
+    PlotlyChart.tsx     # rendu Plotly (thème, légende, export d'images)
+    plotly-runtime.ts   # chargement modulaire de Plotly (cœur + traces à la demande)
   MLPanel.tsx       # UI clustering k-means & régression linéaire
-  ExportBar.tsx     # boutons d'export (regroupe les feuilles nettoyées)
+  ExportBar.tsx     # boutons d'export (regroupe les feuilles, insère les graphiques)
+  SessionBar.tsx    # session mémorisée : état, préférence, effacement
 lib/
   types.ts          # types partagés (dont SheetInput / WorkbookInput / SheetState / ContextResult)
   parse.ts          # lecture CSV / Excel (toutes feuilles)
@@ -297,6 +369,16 @@ lib/
   clean.ts          # pipeline de nettoyage / apurement
   analyze.ts        # EDA, corrélations, observations
   ml.ts             # clustering k-means & régression linéaire (OLS)
+  charts/           # créateur de graphiques (sans dépendance au DOM)
+    types.ts        # ChartConfig : description sérialisable d'un graphique
+    catalog.ts      # types, rôles, options, création / changement de type, recommandations
+    data.ts         # agrégations, dates, hiérarchies, flux, KDE, tendances, format des nombres
+    build.ts        # ChartConfig → figure Plotly (données + mise en page)
+    palettes.ts     # palettes, dégradés, polices
+    geo.ts          # fonds de carte, noms de pays, rapprochement des lieux
+    geo-data.ts     # généré par scripts/geo-referentiel.mjs (ne pas modifier à la main)
+    locale-fr.ts    # traduction française de Plotly
+  session.ts        # session mémorisée dans le navigateur (IndexedDB)
   save-file.ts      # déclenchement robuste du téléchargement (file-saver)
   export-xlsx.ts    # export Excel (multi-feuilles)
   export-pdf.ts     # export PDF (multi-feuilles)
@@ -320,6 +402,10 @@ components/documents/ # chargement, synthèse, anomalies, structure, exports
 app/documents/page.tsx # page du module
 scripts/copy-pdf-worker.mjs # copie du worker pdf.js dans public/
 scripts/lf-referentiel.mjs  # PDF de la loi de finances → lib/documents/lf-data.ts
+scripts/geo-referentiel.mjs # fonds de carte → public/topojson, public/geo, lib/charts/geo-data.ts
+public/
+  topojson/         # fonds Plotly (monde, Afrique) servis localement
+  geo/              # contours des régions et préfectures de Guinée
 exemples/
   exemple_donnees.csv
 ```

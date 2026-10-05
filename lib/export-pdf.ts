@@ -1,10 +1,11 @@
-import type { Analysis, Dataset } from "./types";
+import type { Analysis, ChartImage, Dataset } from "./types";
 
 // Une feuille prête à l'export : données nettoyées + analyse correspondante.
 export interface ExportSheet {
   name: string;
   dataset: Dataset;
   analysis: Analysis;
+  charts?: ChartImage[]; // graphiques personnalisés (créateur de graphiques)
 }
 
 // Construit le rapport PDF et renvoie l'objet jsPDF (testable hors navigateur).
@@ -148,6 +149,29 @@ async function buildPDFDoc(fileName: string, sheets: ExportSheet[]) {
         margin: { left: marginX, right: marginX },
       });
       y = (doc as any).lastAutoTable.finalY + 8;
+    }
+
+    // Graphiques personnalisés : pleine largeur, un saut de page quand le
+    // suivant ne tient plus.
+    if (s.charts && s.charts.length > 0) {
+      const width = doc.internal.pageSize.getWidth() - 2 * marginX;
+      const bottom = doc.internal.pageSize.getHeight() - 16;
+      if (y > 240) {
+        doc.addPage();
+        y = 18;
+      }
+      doc.setFontSize(13);
+      doc.text("Graphiques", marginX, y);
+      y += 5;
+      for (const img of s.charts) {
+        const height = (width * img.height) / img.width;
+        if (y + height > bottom) {
+          doc.addPage();
+          y = 18;
+        }
+        doc.addImage(img.dataUrl, "PNG", marginX, y, width, height, undefined, "FAST");
+        y += height + 6;
+      }
     }
 
     // Échantillon de données (30 premières lignes)

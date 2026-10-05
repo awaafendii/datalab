@@ -1,5 +1,7 @@
 // Types partagés de la plateforme d'analyse de données.
 
+import type { ChartConfig } from "./charts/types";
+
 export type CellValue = string | number | boolean | null;
 
 export type Row = Record<string, CellValue>;
@@ -130,6 +132,15 @@ export interface ColumnAnalysis {
   categories?: { label: string; count: number }[]; // colonnes catégorielles
 }
 
+// Image PNG d'un graphique personnalisé, insérée dans les rapports PDF et
+// Word (dimensions en pixels CSS ; l'image est rendue en double résolution).
+export interface ChartImage {
+  title: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
 export interface Analysis {
   profile: DatasetProfile;
   correlations: Correlation[];
@@ -243,6 +254,8 @@ export interface SheetState {
   // Résultat de l'analyse IA optionnelle pour cette feuille, si l'utilisateur
   // l'a activée ; null => on affiche l'analyse heuristique locale par défaut.
   aiContext: ContextResult | null;
+  // Graphiques personnalisés (créateur de graphiques) de cette feuille.
+  charts: ChartConfig[];
 }
 
 export const DEFAULT_CLEANING: CleaningOptions = {

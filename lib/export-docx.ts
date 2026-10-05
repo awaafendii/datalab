@@ -1,4 +1,4 @@
-import type { Analysis, Dataset } from "./types";
+import type { Analysis, ChartImage, Dataset } from "./types";
 import { loadSaveAs } from "./save-file";
 
 // Une feuille prête à l'export : données nettoyées + analyse correspondante.
@@ -6,6 +6,7 @@ export interface ExportSheet {
   name: string;
   dataset: Dataset;
   analysis: Analysis;
+  charts?: ChartImage[]; // graphiques personnalisés (créateur de graphiques)
 }
 
 // Construit le document Word et renvoie { doc, Packer } (testable hors navigateur).
@@ -24,6 +25,7 @@ async function buildDocument(fileName: string, sheets: ExportSheet[]) {
     WidthType,
     AlignmentType,
     PageBreak,
+    ImageRun,
   } = await import("docx");
 
   const BLUE = "2563EB";
@@ -167,6 +169,29 @@ async function buildDocument(fileName: string, sheets: ExportSheet[]) {
         }),
       );
     }
+
+    // Graphiques personnalisés, sur la largeur utile d'une page A4.
+    if (s.charts && s.charts.length > 0) {
+      children.push(
+        new Paragraph({ text: "" }),
+        new Paragraph({ text: "Graphiques", heading: sectionHeading }),
+      );
+      for (const img of s.charts) {
+        const width = 600;
+        children.push(
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new ImageRun({
+                data: dataUrlBytes(img.dataUrl),
+                transformation: { width, height: Math.round((width * img.height) / img.width) },
+                altText: { name: img.title, title: img.title, description: img.title },
+              }),
+            ],
+          }),
+        );
+      }
+    }
   }
 
   const doc = new Document({
@@ -194,6 +219,18 @@ export async function exportDOCX(
   const saveAs = await loadSaveAs();
   const blob = await Packer.toBlob(doc);
   saveAs(blob, baseName(fileName) + "_rapport.docx");
+}
+
+// « data:image/png;base64,… » → octets de l'image.
+function dataUrlBytes(dataUrl: string): Uint8Array {
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  if (typeof atob === "function") {
+    const bin = atob(base64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  return Uint8Array.from(Buffer.from(base64, "base64"));
 }
 
 function baseName(name: string): string {

@@ -1,5 +1,6 @@
 "use client";
 
+import { SlidersHorizontal } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -11,6 +12,14 @@ import {
   YAxis,
 } from "recharts";
 import type { Analysis, Correlation } from "@/lib/types";
+import type { ChartConfig, ChartType } from "@/lib/charts/types";
+
+// Point de départ d'un graphique personnalisé, créé à partir d'un graphique
+// de l'analyse automatique.
+export interface ChartPreset {
+  type: ChartType;
+  roles: ChartConfig["roles"];
+}
 
 const PRIMARY = "#2563eb";
 
@@ -24,7 +33,13 @@ function corrColor(r: number): string {
   return `rgba(37, 99, 235, ${0.25 + t * 0.75})`;
 }
 
-export default function Charts({ analysis }: { analysis: Analysis }) {
+export default function Charts({
+  analysis,
+  onCustomize,
+}: {
+  analysis: Analysis;
+  onCustomize?: (preset: ChartPreset) => void;
+}) {
   const charts = analysis.columnAnalyses.filter(
     (c) =>
       (c.histogram && c.histogram.length > 0) ||
@@ -50,6 +65,17 @@ export default function Charts({ analysis }: { analysis: Analysis }) {
                 <span className="type">
                   {c.type === "number" ? "distribution" : "fréquences"}
                 </span>
+                {onCustomize && (
+                  <CustomizeButton
+                    onClick={() =>
+                      onCustomize(
+                        c.type === "number"
+                          ? { type: "histogram", roles: { y: [c.name] } }
+                          : { type: "column", roles: { x: [c.name] } },
+                      )
+                    }
+                  />
+                )}
               </h4>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart
@@ -88,11 +114,43 @@ export default function Charts({ analysis }: { analysis: Analysis }) {
 
       {analysis.correlations.length > 0 && (
         <>
-          <div className="section-title">Corrélations (Pearson)</div>
+          <div className="section-title">
+            Corrélations (Pearson)
+            {onCustomize && (
+              <CustomizeButton
+                label="Matrice personnalisable"
+                onClick={() => {
+                  const dims = Array.from(
+                    new Set(analysis.correlations.flatMap((r) => [r.a, r.b])),
+                  ).slice(0, 12);
+                  onCustomize({ type: "correlation", roles: { dims } });
+                }}
+              />
+            )}
+          </div>
           <CorrelationBars correlations={analysis.correlations.slice(0, 12)} />
         </>
       )}
     </div>
+  );
+}
+
+function CustomizeButton({
+  onClick,
+  label = "Personnaliser",
+}: {
+  onClick: () => void;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="link-btn chart-customize"
+      onClick={onClick}
+      title="Ouvrir ce graphique dans le créateur de graphiques (type, couleurs, titres…)"
+    >
+      <SlidersHorizontal size={13} /> {label}
+    </button>
   );
 }
 
