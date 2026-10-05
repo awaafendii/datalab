@@ -1,4 +1,4 @@
-import type { Analysis, Dataset } from "./types";
+import type { Analysis, Dataset, ManualLogEntry } from "./types";
 import { loadSaveAs } from "./save-file";
 
 // Une feuille prête à l'export : données nettoyées + analyse correspondante.
@@ -6,6 +6,7 @@ export interface ExportSheet {
   name: string;
   dataset: Dataset;
   analysis: Analysis;
+  manualLog?: ManualLogEntry[]; // décisions manuelles de nettoyage
 }
 
 // Nettoie un nom pour respecter les contraintes Excel (31 caractères max,
@@ -111,6 +112,27 @@ export async function buildXLSX(
       wb,
       XLSX.utils.json_to_sheet(corrRows),
       safeSheetName("Corrélations", used),
+    );
+  }
+
+  // Décisions manuelles de nettoyage (traçabilité : qui a changé quoi et pourquoi).
+  const manualRows = sheets.flatMap((s) =>
+    (s.manualLog ?? []).map((e) => ({
+      ...(multi ? { Feuille: s.name } : {}),
+      Ligne: e.row,
+      Colonne: e.column || "(ligne entière)",
+      Problème: e.issue === "missing" ? "Cellule vide" : e.issue === "outlier" ? "Valeur atypique" : "Ligne",
+      "Valeur d'origine": e.issue === "row" ? "" : (e.before ?? ""),
+      "Nouvelle valeur": e.issue === "row" ? "" : (e.after ?? ""),
+      Décision: e.decision,
+      Justification: e.note,
+    })),
+  );
+  if (manualRows.length > 0) {
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(manualRows),
+      safeSheetName("Décisions manuelles", used),
     );
   }
 

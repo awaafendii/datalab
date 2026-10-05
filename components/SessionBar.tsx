@@ -24,9 +24,9 @@ export default function SessionBar({ persist, restoredAt, error, onTogglePersist
       <HardDrive size={16} aria-hidden />
       <span className="msg">
         {restoredAt && persist
-          ? `Session du ${formatDate(restoredAt)} restaurée : fichier, réglages et graphiques.`
+          ? `Session du ${formatDate(restoredAt)} restaurée : fichier, réglages, décisions et graphiques.`
           : persist
-            ? "Fichier, réglages et graphiques sont mémorisés dans ce navigateur et retrouvés après actualisation."
+            ? "Fichier, réglages, décisions de nettoyage et graphiques sont mémorisés dans ce navigateur et retrouvés après actualisation."
             : "Session non mémorisée : tout sera perdu à l'actualisation de la page."}
         {error && <> {error}</>}
       </span>

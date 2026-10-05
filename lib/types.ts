@@ -112,6 +112,55 @@ export interface CleaningResult {
   steps: CleaningStep[];
   rowsBefore: number;
   rowsAfter: number;
+  // Décisions manuelles effectivement appliquées (journal pour les exports).
+  manualLog: ManualLogEntry[];
+}
+
+// --- Examen manuel des cellules vides et des valeurs atypiques ---
+//
+// Certaines corrections ne doivent pas être automatiques : l'utilisateur
+// décide cellule par cellule, après examen. Une décision prévaut toujours sur
+// les traitements automatiques (imputation, plafonnement, suppression).
+
+export type ReviewIssueKind = "missing" | "outlier";
+
+export type CellDecision =
+  // valeur saisie, ou choisie parmi les suggestions (source : « médiane »,
+  // « borne haute »…, reprise dans le journal)
+  | { action: "set"; value: CellValue; source?: string }
+  | { action: "keep" }; // laisser tel quel (vide ou valeur atypique conservée)
+
+export interface CellReview {
+  row: number; // index de la ligne dans la feuille d'origine (0 = 1re ligne de données)
+  column: string;
+  issue: ReviewIssueKind;
+  original: CellValue; // valeur au moment de la décision
+  decision: CellDecision;
+  note: string; // justification (facultative)
+  decidedAt: string; // ISO
+}
+
+export interface RowRemoval {
+  row: number;
+  note: string;
+  decidedAt: string;
+}
+
+export interface ManualReview {
+  cells: CellReview[];
+  removedRows: RowRemoval[];
+}
+
+export const EMPTY_REVIEW: ManualReview = { cells: [], removedRows: [] };
+
+export interface ManualLogEntry {
+  row: number; // numéro de ligne affiché (1 = 1re ligne de données)
+  column: string; // "" pour une ligne supprimée
+  issue: ReviewIssueKind | "row";
+  before: CellValue;
+  after: CellValue;
+  decision: string; // libellé lisible
+  note: string;
 }
 
 export interface Correlation {
@@ -256,6 +305,9 @@ export interface SheetState {
   aiContext: ContextResult | null;
   // Graphiques personnalisés (créateur de graphiques) de cette feuille.
   charts: ChartConfig[];
+  // Décisions manuelles sur les cellules vides et atypiques de cette feuille
+  // (propres à la feuille : jamais recopiées vers les autres).
+  review: ManualReview;
 }
 
 export const DEFAULT_CLEANING: CleaningOptions = {

@@ -9,7 +9,7 @@
 // modification).
 
 import type { ChartConfig } from "./charts/types";
-import type { CleaningOptions, ContextResult, WorkbookInput } from "./types";
+import type { CleaningOptions, ContextResult, ManualReview, WorkbookInput } from "./types";
 
 export interface SavedSheet {
   name: string;
@@ -17,6 +17,7 @@ export interface SavedSheet {
   cleaned: boolean;
   aiContext: ContextResult | null;
   charts: ChartConfig[];
+  review?: ManualReview; // décisions manuelles (absentes des sessions antérieures)
 }
 
 export interface SavedState {

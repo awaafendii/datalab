@@ -119,10 +119,10 @@ export default function CleaningPanel({ options, onChange }: Props) {
             onChange={(e) =>
               set("outlierThreshold", Number(e.target.value) || 1.5)
             }
-            disabled={options.outlierStrategy === "none"}
           />
           <p className="hint" style={{ marginTop: 6 }}>
-            1.5 = standard, 3 = seulement les valeurs extrêmes.
+            1.5 = standard, 3 = seulement les valeurs extrêmes. Sert aussi à
+            repérer les valeurs à examiner ci-dessous.
           </p>
         </div>
       </div>

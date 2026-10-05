@@ -22,6 +22,7 @@ import Charts, { type ChartPreset } from "@/components/Charts";
 import ChartBuilder from "@/components/charts/ChartBuilder";
 import MLPanel from "@/components/MLPanel";
 import ExportBar from "@/components/ExportBar";
+import ReviewPanel from "@/components/ReviewPanel";
 import SessionBar from "@/components/SessionBar";
 import {
   clearSession,
@@ -41,6 +42,8 @@ import { columnInfos } from "@/lib/charts/data";
 import type { ChartConfig } from "@/lib/charts/types";
 import {
   DEFAULT_CLEANING,
+  EMPTY_REVIEW,
+  type ManualReview,
   type CleaningOptions,
   type ContextResult,
   type SheetState,
@@ -48,6 +51,11 @@ import {
 } from "@/lib/types";
 
 type Stage = "upload" | "workspace";
+
+function formatCell(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "vide";
+  return typeof v === "number" ? v.toLocaleString("fr-FR", { maximumFractionDigits: 4 }) : String(v);
+}
 
 export default function Home() {
   const [workbook, setWorkbook] = useState<WorkbookInput | null>(null);
@@ -82,7 +90,8 @@ export default function Home() {
         const { workbook: wb, state } = saved;
         const restored: SheetState[] = state.sheets.map((s, i) => {
           const dataset = wb.sheets[i].dataset;
-          const result = s.cleaned ? cleanDataset(dataset, s.options) : null;
+          const review = s.review ?? EMPTY_REVIEW;
+          const result = s.cleaned ? cleanDataset(dataset, s.options, review) : null;
           return {
             name: s.name,
             dataset,
@@ -91,6 +100,7 @@ export default function Home() {
             analysis: result ? analyzeDataset(result.dataset) : null,
             aiContext: s.aiContext,
             charts: s.charts ?? [],
+            review,
           };
         });
         savedWorkbook.current = wb;
@@ -132,6 +142,7 @@ export default function Home() {
             cleaned: s.result !== null,
             aiContext: s.aiContext,
             charts: s.charts,
+            review: s.review,
           })),
         });
         setSessionError(null);
@@ -175,6 +186,7 @@ export default function Home() {
         analysis: null,
         aiContext: null,
         charts: [],
+        review: EMPTY_REVIEW,
       })),
     );
     setActiveIndex(0);
@@ -209,6 +221,12 @@ export default function Home() {
     setChartFocus(cfg.id);
   };
 
+  const setActiveReview = (review: ManualReview) => {
+    setSheets((prev) =>
+      prev.map((s, i) => (i === activeIndex ? { ...s, review } : s)),
+    );
+  };
+
   const setActiveOptions = (opts: CleaningOptions) => {
     setSheets((prev) =>
       prev.map((s, i) => (i === activeIndex ? { ...s, options: opts } : s)),
@@ -222,7 +240,7 @@ export default function Home() {
       setSheets((prev) =>
         prev.map((s, i) => {
           if (i !== activeIndex) return s;
-          const res = cleanDataset(s.dataset, s.options);
+          const res = cleanDataset(s.dataset, s.options, s.review);
           const ana = analyzeDataset(res.dataset);
           return { ...s, result: res, analysis: ana };
         }),
@@ -244,7 +262,7 @@ export default function Home() {
       setSheets((prev) =>
         prev.map((s) => {
           if (s.result !== null) return s;
-          const res = cleanDataset(s.dataset, opts);
+          const res = cleanDataset(s.dataset, opts, s.review);
           const ana = analyzeDataset(res.dataset);
           return { ...s, options: opts, result: res, analysis: ana };
         }),
@@ -391,6 +409,12 @@ export default function Home() {
                     propres réglages et son propre résultat.
                   </p>
                   <CleaningPanel options={active.options} onChange={setActiveOptions} />
+                  <ReviewPanel
+                    dataset={active.dataset}
+                    options={active.options}
+                    review={active.review}
+                    onChange={setActiveReview}
+                  />
                   <div className="btn-row">
                     <button
                       className="btn primary"
@@ -442,6 +466,39 @@ export default function Home() {
                       </li>
                     ))}
                   </ul>
+                  {active.result.manualLog.length > 0 && (
+                    <details className="panel" style={{ marginTop: 14 }}>
+                      <summary>
+                        Journal des décisions manuelles ({active.result.manualLog.length})
+                      </summary>
+                      <div className="table-wrap tall">
+                        <table className="data">
+                          <thead>
+                            <tr>
+                              <th>Ligne</th>
+                              <th>Colonne</th>
+                              <th>Avant</th>
+                              <th>Après</th>
+                              <th>Décision</th>
+                              <th>Justification</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {active.result.manualLog.map((e, i) => (
+                              <tr key={i}>
+                                <td className="num">{e.row}</td>
+                                <td>{e.column || "—"}</td>
+                                <td>{e.issue === "row" ? "—" : formatCell(e.before)}</td>
+                                <td>{e.issue === "row" ? "—" : formatCell(e.after)}</td>
+                                <td>{e.decision}</td>
+                                <td>{e.note || "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
+                  )}
                 </div>
 
                 <div className="card">
@@ -557,6 +614,7 @@ export default function Home() {
                     dataset: s.result!.dataset,
                     analysis: s.analysis!,
                     charts: s.charts,
+                    manualLog: s.result!.manualLog,
                   }))}
                 />
               )}

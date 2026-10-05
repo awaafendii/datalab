@@ -1,4 +1,4 @@
-import type { Analysis, ChartImage, Dataset } from "./types";
+import type { Analysis, ChartImage, Dataset, ManualLogEntry } from "./types";
 
 // Une feuille prête à l'export : données nettoyées + analyse correspondante.
 export interface ExportSheet {
@@ -6,6 +6,7 @@ export interface ExportSheet {
   dataset: Dataset;
   analysis: Analysis;
   charts?: ChartImage[]; // graphiques personnalisés (créateur de graphiques)
+  manualLog?: ManualLogEntry[]; // décisions manuelles de nettoyage
 }
 
 // Construit le rapport PDF et renvoie l'objet jsPDF (testable hors navigateur).
@@ -151,6 +152,34 @@ async function buildPDFDoc(fileName: string, sheets: ExportSheet[]) {
       y = (doc as any).lastAutoTable.finalY + 8;
     }
 
+    // Décisions manuelles de nettoyage
+    if (s.manualLog && s.manualLog.length > 0) {
+      if (y > 240) {
+        doc.addPage();
+        y = 18;
+      }
+      doc.setFontSize(13);
+      doc.text("Décisions de nettoyage manuelles", marginX, y);
+      autoTable(doc, {
+        startY: y + 2,
+        head: [["Ligne", "Colonne", "Avant", "Après", "Décision", "Justification"]],
+        body: s.manualLog.map((e) => [
+          String(e.row),
+          e.column || "—",
+          e.issue === "row" ? "—" : fmtCell(e.before),
+          e.issue === "row" ? "—" : fmtCell(e.after),
+          e.decision,
+          e.note || "—",
+        ]),
+        theme: "grid",
+        headStyles: { fillColor: [37, 99, 235], fontSize: 8 },
+        styles: { fontSize: 7.5, cellPadding: 1.5 },
+        columnStyles: { 5: { cellWidth: 50 } },
+        margin: { left: marginX, right: marginX },
+      });
+      y = (doc as any).lastAutoTable.finalY + 8;
+    }
+
     // Graphiques personnalisés : pleine largeur, un saut de page quand le
     // suivant ne tient plus.
     if (s.charts && s.charts.length > 0) {
@@ -229,6 +258,13 @@ export async function exportPDF(
 ): Promise<void> {
   const doc = await buildPDFDoc(fileName, sheets);
   doc.save(baseName(fileName) + "_rapport.pdf");
+}
+
+
+// Valeur lisible dans le journal des décisions manuelles.
+function fmtCell(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "vide";
+  return typeof v === "number" ? v.toLocaleString("fr-FR", { maximumFractionDigits: 4 }) : String(v);
 }
 
 function baseName(name: string): string {

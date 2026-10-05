@@ -50,6 +50,17 @@ générées) puis exportez le tout en **XLSX**, **PDF** ou **Word**.
     ou suppression des lignes),
   - détection et traitement des valeurs atypiques (outliers) par écart
     interquartile (IQR) : plafonnement (winsorisation) ou suppression.
+  - **examen manuel des cellules vides et des valeurs atypiques** : pour les
+    décisions qui ne doivent pas être automatiques, chaque cas est listé avec
+    le contexte de sa ligne et ce que ferait le traitement automatique ;
+    l'utilisateur choisit (laisser vide, conserver la valeur, saisir ou
+    corriger, moyenne / médiane / valeur la plus fréquente, plafonner, vider,
+    supprimer la ligne) et peut noter une justification. Filtres (vides,
+    atypiques, à décider, décidées, par colonne) et actions groupées par
+    colonne. Une décision prévaut toujours sur les réglages automatiques ;
+    les décisions sont propres à la feuille, conservées en ajustant le
+    nettoyage et dans la session, et reprises dans un **journal** (écran,
+    onglet Excel « Décisions manuelles », section du PDF et du Word).
 - **Analyse exploratoire** : statistiques descriptives, histogrammes de
   distribution, fréquences des variables catégorielles, matrice de corrélations
   de Pearson. Chaque graphique automatique a un lien « Personnaliser » qui le
@@ -347,6 +358,7 @@ components/
   DataTable.tsx     # aperçu tabulaire
   ProfileView.tsx   # profil du jeu de données
   CleaningPanel.tsx # options de nettoyage
+  ReviewPanel.tsx   # examen manuel des cellules vides et atypiques
   Charts.tsx        # graphiques automatiques (Recharts) + « Personnaliser »
   charts/           # créateur de graphiques (Plotly)
     ChartBuilder.tsx    # tableau de bord + éditeur (onglets Type / Données / Format)
@@ -366,7 +378,8 @@ lib/
   context-ai.ts     # appel client vers /api/context (analyse IA optionnelle)
   stats.ts          # inférence de type + fonctions statistiques
   profile.ts        # profilage des colonnes
-  clean.ts          # pipeline de nettoyage / apurement
+  clean.ts          # pipeline de nettoyage / apurement (applique les décisions manuelles)
+  review.ts         # repérage des cellules à examiner, suggestions, décisions
   analyze.ts        # EDA, corrélations, observations
   ml.ts             # clustering k-means & régression linéaire (OLS)
   charts/           # créateur de graphiques (sans dépendance au DOM)

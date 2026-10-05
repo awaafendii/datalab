@@ -1,4 +1,4 @@
-import type { Analysis, ChartImage, Dataset } from "./types";
+import type { Analysis, ChartImage, Dataset, ManualLogEntry } from "./types";
 import { loadSaveAs } from "./save-file";
 
 // Une feuille prête à l'export : données nettoyées + analyse correspondante.
@@ -7,6 +7,7 @@ export interface ExportSheet {
   dataset: Dataset;
   analysis: Analysis;
   charts?: ChartImage[]; // graphiques personnalisés (créateur de graphiques)
+  manualLog?: ManualLogEntry[]; // décisions manuelles de nettoyage
 }
 
 // Construit le document Word et renvoie { doc, Packer } (testable hors navigateur).
@@ -170,6 +171,30 @@ async function buildDocument(fileName: string, sheets: ExportSheet[]) {
       );
     }
 
+    // Décisions manuelles de nettoyage
+    if (s.manualLog && s.manualLog.length > 0) {
+      children.push(
+        new Paragraph({ text: "" }),
+        new Paragraph({ text: "Décisions de nettoyage manuelles", heading: sectionHeading }),
+        new Table({
+          width: fullWidth,
+          rows: [
+            headerRow(["Ligne", "Colonne", "Avant", "Après", "Décision", "Justification"]),
+            ...s.manualLog.map((e) =>
+              dataRow([
+                String(e.row),
+                e.column || "—",
+                e.issue === "row" ? "—" : fmtCell(e.before),
+                e.issue === "row" ? "—" : fmtCell(e.after),
+                e.decision,
+                e.note || "—",
+              ]),
+            ),
+          ],
+        }),
+      );
+    }
+
     // Graphiques personnalisés, sur la largeur utile d'une page A4.
     if (s.charts && s.charts.length > 0) {
       children.push(
@@ -231,6 +256,13 @@ function dataUrlBytes(dataUrl: string): Uint8Array {
     return out;
   }
   return Uint8Array.from(Buffer.from(base64, "base64"));
+}
+
+
+// Valeur lisible dans le journal des décisions manuelles.
+function fmtCell(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "vide";
+  return typeof v === "number" ? v.toLocaleString("fr-FR", { maximumFractionDigits: 4 }) : String(v);
 }
 
 function baseName(name: string): string {

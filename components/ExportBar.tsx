@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { FileText, FileSpreadsheet, FileType2 } from "lucide-react";
-import type { Analysis, ChartImage, Dataset } from "@/lib/types";
+import type { Analysis, ChartImage, Dataset, ManualLogEntry } from "@/lib/types";
 import type { ChartConfig } from "@/lib/charts/types";
 import { LIGHT_THEME } from "@/lib/charts/types";
 import { autoTitle } from "@/lib/charts/catalog";
@@ -14,6 +14,7 @@ export interface ExportSheetInput {
   dataset: Dataset;
   analysis: Analysis;
   charts: ChartConfig[]; // graphiques personnalisés de la feuille
+  manualLog: ManualLogEntry[]; // décisions manuelles de nettoyage
 }
 
 interface Props {

@@ -1,11 +1,15 @@
 import type {
+  CellReview,
   CellValue,
   CleaningOptions,
   CleaningResult,
   CleaningStep,
   Dataset,
+  ManualLogEntry,
+  ManualReview,
   Row,
 } from "./types";
+import { EMPTY_REVIEW } from "./types";
 import {
   EMPTY_TOKENS,
   inferColumnType,
@@ -35,15 +39,18 @@ function mode(values: CellValue[]): CellValue {
   return best;
 }
 
-// Applique le pipeline de nettoyage et journalise chaque étape.
-export function cleanDataset(
+export { mode as modeOf };
+
+// Étapes 1 à 3 : espaces, marqueurs de vide, typage des nombres. L'examen
+// manuel (lib/review.ts) travaille sur ces valeurs normalisées, avec les
+// mêmes index de lignes que la feuille d'origine.
+export function normalizeRows(
   input: Dataset,
   opts: CleaningOptions,
-): CleaningResult {
+): { rows: Row[]; steps: CleaningStep[] } {
   const steps: CleaningStep[] = [];
-  const rowsBefore = input.rows.length;
-  let rows: Row[] = input.rows.map((r) => ({ ...r }));
-  const columns = [...input.columns];
+  const rows: Row[] = input.rows.map((r) => ({ ...r }));
+  const columns = input.columns;
 
   // 1. Trim des chaînes
   if (opts.trimStrings) {
@@ -119,6 +126,97 @@ export function cleanDataset(
       });
   }
 
+  return { rows, steps };
+}
+
+// Libellé d'une décision manuelle pour le journal.
+export function decisionLabel(d: CellReview): string {
+  if (d.decision.action === "keep") {
+    return d.issue === "missing" ? "Laissée vide" : "Valeur conservée";
+  }
+  if (d.decision.source) return `Remplacée par ${d.decision.source}`;
+  if (isEmpty(d.decision.value)) return "Cellule vidée";
+  return d.issue === "missing" ? "Valeur saisie" : "Valeur corrigée";
+}
+
+// Applique le pipeline de nettoyage et journalise chaque étape. Les
+// décisions manuelles (`review`) sont appliquées juste après la
+// normalisation et prévalent sur les traitements automatiques : une cellule
+// décidée n'est ni imputée, ni plafonnée, ni cause de suppression de ligne.
+export function cleanDataset(
+  input: Dataset,
+  opts: CleaningOptions,
+  review: ManualReview = EMPTY_REVIEW,
+): CleaningResult {
+  const rowsBefore = input.rows.length;
+  const columns = [...input.columns];
+  const normalized = normalizeRows(input, opts);
+  const steps = normalized.steps;
+  let rows = normalized.rows;
+
+  // 3 bis. Décisions manuelles
+  const decided = new WeakMap<Row, Set<string>>();
+  const isDecided = (r: Row, c: string) => decided.get(r)?.has(c) ?? false;
+  const manualLog: ManualLogEntry[] = [];
+  if (review.cells.length > 0 || review.removedRows.length > 0) {
+    const known = new Set(columns);
+    const numeric = new Set(columns.filter((c) => inferColumnType(rows.map((r) => r[c])) === "number"));
+    const removed = new Set(review.removedRows.filter((x) => x.row >= 0 && x.row < rows.length).map((x) => x.row));
+    let set = 0;
+    let kept = 0;
+    for (const d of review.cells) {
+      const r = rows[d.row];
+      if (!r || !known.has(d.column) || removed.has(d.row)) continue;
+      const before = r[d.column];
+      if (d.decision.action === "set") {
+        let v = d.decision.value;
+        if (typeof v === "string" && v.trim() === "") v = null;
+        if (v !== null && numeric.has(d.column)) v = toNumber(v) ?? v;
+        r[d.column] = v;
+        set++;
+      } else {
+        kept++;
+      }
+      let s = decided.get(r);
+      if (!s) decided.set(r, (s = new Set()));
+      s.add(d.column);
+      manualLog.push({
+        row: d.row + 1,
+        column: d.column,
+        issue: d.issue,
+        before,
+        after: r[d.column],
+        decision: decisionLabel(d),
+        note: d.note,
+      });
+    }
+    for (const x of review.removedRows) {
+      if (!removed.has(x.row)) continue;
+      manualLog.push({
+        row: x.row + 1,
+        column: "",
+        issue: "row",
+        before: null,
+        after: null,
+        decision: "Ligne supprimée",
+        note: x.note,
+      });
+    }
+    if (removed.size > 0) rows = rows.filter((_, i) => !removed.has(i));
+    manualLog.sort((a, b) => a.row - b.row || a.column.localeCompare(b.column, "fr"));
+    const parts = [
+      set ? `${set} valeur(s) saisie(s) ou corrigée(s)` : "",
+      kept ? `${kept} cellule(s) laissée(s) telle(s) quelle(s)` : "",
+      removed.size ? `${removed.size} ligne(s) supprimée(s)` : "",
+    ].filter(Boolean);
+    if (parts.length) {
+      steps.push({
+        label: "Décisions manuelles appliquées",
+        detail: `${parts.join(", ")} — elles prévalent sur les traitements automatiques.`,
+      });
+    }
+  }
+
   // 4. Suppression des doublons
   if (opts.removeDuplicates) {
     const seen = new Set<string>();
@@ -137,11 +235,11 @@ export function cleanDataset(
       });
   }
 
-  // 5. Traitement des valeurs manquantes
+  // 5. Traitement des valeurs manquantes (hors cellules décidées)
   if (opts.missingStrategy !== "none") {
     if (opts.missingStrategy === "drop-rows") {
       const before = rows.length;
-      rows = rows.filter((r) => columns.every((c) => !isEmpty(r[c])));
+      rows = rows.filter((r) => columns.every((c) => !isEmpty(r[c]) || isDecided(r, c)));
       const removed = before - rows.length;
       if (removed > 0)
         steps.push({
@@ -177,7 +275,7 @@ export function cleanDataset(
 
         if (fill === null) continue;
         for (const r of rows) {
-          if (isEmpty(r[c])) {
+          if (isEmpty(r[c]) && !isDecided(r, c)) {
             r[c] = fill;
             imputed++;
           }
@@ -199,7 +297,7 @@ export function cleanDataset(
     }
   }
 
-  // 6. Traitement des outliers (IQR)
+  // 6. Traitement des outliers (IQR), hors cellules décidées
   if (opts.outlierStrategy !== "none") {
     const k = opts.outlierThreshold || 1.5;
     const numericCols = columns.filter(
@@ -223,6 +321,7 @@ export function cleanDataset(
       const before = rows.length;
       rows = rows.filter((r) => {
         for (const [c, b] of bounds) {
+          if (isDecided(r, c)) continue;
           const v = toNumber(r[c]);
           if (v !== null && (v < b.low || v > b.high)) return false;
         }
@@ -238,6 +337,7 @@ export function cleanDataset(
       let capped = 0;
       for (const r of rows) {
         for (const [c, b] of bounds) {
+          if (isDecided(r, c)) continue;
           const v = toNumber(r[c]);
           if (v === null) continue;
           if (v < b.low) {
@@ -268,5 +368,6 @@ export function cleanDataset(
     steps,
     rowsBefore,
     rowsAfter: rows.length,
+    manualLog,
   };
 }
