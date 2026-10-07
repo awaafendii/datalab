@@ -137,6 +137,22 @@ export function resolveColorscale(
   return { colorscale: scale.id, reversescale: reverse !== Boolean(scale.flip) };
 }
 
+// Trois couleurs (basse, médiane, haute) d'un dégradé, pour l'échelle de
+// couleurs conditionnelle d'Excel.
+export function colorscaleStops(id: string, reverse: boolean, from: string, to: string): [string, string, string] {
+  let stops = id === "custom" ? [from, to] : [...(COLORSCALES.find((c) => c.id === id)?.preview ?? ["#ffffff", "#2a78d6"])];
+  if (reverse) stops = stops.reverse();
+  const mid = stops.length >= 3 ? stops[Math.floor(stops.length / 2)] : mixHex(stops[0], stops[stops.length - 1]);
+  return [stops[0], mid, stops[stops.length - 1]];
+}
+
+function mixHex(a: string, b: string): string {
+  const pa = parseHex(a);
+  const pb = parseHex(b);
+  if (!pa || !pb) return a;
+  return `#${pa.map((v, i) => Math.round((v + pb[i]) / 2).toString(16).padStart(2, "0")).join("")}`;
+}
+
 export function colorscalePreview(id: string, reverse: boolean, from: string, to: string): string {
   const stops = id === "custom" ? [from, to] : [...(COLORSCALES.find((c) => c.id === id)?.preview ?? [])];
   if (reverse) stops.reverse();

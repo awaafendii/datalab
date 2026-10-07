@@ -113,11 +113,29 @@ générées) puis exportez le tout en **XLSX**, **PDF** ou **Word**.
     avec équation, R² / R² ajusté / RMSE / MAE, coefficients standardisés et
     graphique observé/prédit.
 - **Observations** générées automatiquement en français.
-- **Exports** : Excel (données nettoyées + profil + corrélations + observations),
-  PDF et Word (rapport complet, avec les graphiques personnalisés en images
-  haute définition — option décochable). L'Excel ne contient pas les
-  graphiques : la bibliothèque SheetJS (édition communautaire) n'écrit pas
-  d'images. Pour un classeur multi-feuilles, l'export
+- **Exports** : Excel (données nettoyées + profil + corrélations + décisions
+  manuelles + observations), PDF et Word (rapport complet, avec les graphiques
+  personnalisés en images haute définition). Option « Inclure les graphiques
+  personnalisés » commune aux trois formats.
+  - **Excel** : chaque liste est un **vrai tableau Excel** (style, boutons de
+    filtre et de tri, lignes à bandes, en-tête figé, largeurs ajustées), avec
+    les formats de nombres (séparateur de milliers) et de **vraies dates**
+    (colonnes de type date) ; échelle de couleurs sur les corrélations.
+  - Onglet **« Graphiques »** (un par feuille source) : pour chaque graphique,
+    le **tableau de ses données** (valeurs agrégées telles que tracées) et, à
+    droite, un **graphique Excel natif** relié à ce tableau, donc modifiable
+    dans Excel (type, couleurs, séries…) : colonnes et barres (groupées,
+    empilées, 100 %), courbes, aires, secteurs, anneau, histogramme, Pareto,
+    combiné (axe secondaire), nuage (courbes de tendance Excel), bulles,
+    radar. Les types sans équivalent dans Excel (cartes, Sankey, treemap,
+    boîtes à moustaches, cascade, Gantt, 3D…) sont insérés en **image** à côté
+    de leurs données (statistiques descriptives pour les distributions, flux
+    pour le Sankey…) ; cartes de chaleur et matrices de corrélation gardent
+    une mise en forme conditionnelle en dégradé. Les graphiques natifs sont
+    écrits directement en DrawingML (`lib/xlsx-drawings.ts`) dans le
+    classeur produit par ExcelJS.
+
+  Pour un classeur multi-feuilles, l'export
   **regroupe toutes les feuilles déjà nettoyées en un seul fichier** : un
   onglet de données par feuille dans l'Excel, une section par feuille dans le
   PDF et le Word.
@@ -233,7 +251,7 @@ des faux positifs, que le relecteur écarte d'un clic.
 ## Stack technique
 
 - [Next.js 14](https://nextjs.org/) (App Router) + React 18 + TypeScript
-- [SheetJS](https://sheetjs.com/) (lecture/écriture Excel), [PapaParse](https://www.papaparse.com/) (CSV)
+- [SheetJS](https://sheetjs.com/) (lecture Excel), [ExcelJS](https://github.com/exceljs/exceljs) (export Excel : tableaux, formats, chargé à la demande) + [JSZip](https://stuk.github.io/jszip/) (insertion des graphiques Excel natifs), [PapaParse](https://www.papaparse.com/) (CSV)
 - [Recharts](https://recharts.org/) (graphiques de l'analyse automatique et du ML)
 - [Plotly.js](https://plotly.com/javascript/) (créateur de graphiques), en
   version **modulaire** (`plotly.js/lib/core` + un module par type de trace,
@@ -386,14 +404,16 @@ lib/
     types.ts        # ChartConfig : description sérialisable d'un graphique
     catalog.ts      # types, rôles, options, création / changement de type, recommandations
     data.ts         # agrégations, dates, hiérarchies, flux, KDE, tendances, format des nombres
-    build.ts        # ChartConfig → figure Plotly (données + mise en page)
+    build.ts        # ChartConfig → figure Plotly (données + mise en page) + export Excel
+    excel-types.ts  # tableau de données et description d'un graphique Excel natif
     palettes.ts     # palettes, dégradés, polices
     geo.ts          # fonds de carte, noms de pays, rapprochement des lieux
     geo-data.ts     # généré par scripts/geo-referentiel.mjs (ne pas modifier à la main)
     locale-fr.ts    # traduction française de Plotly
   session.ts        # session mémorisée dans le navigateur (IndexedDB)
   save-file.ts      # déclenchement robuste du téléchargement (file-saver)
-  export-xlsx.ts    # export Excel (multi-feuilles)
+  export-xlsx.ts    # export Excel (multi-feuilles, tableaux Excel, onglets Graphiques)
+  xlsx-drawings.ts  # graphiques Excel natifs (DrawingML) et images insérés dans le classeur
   export-pdf.ts     # export PDF (multi-feuilles)
   export-docx.ts    # export Word (multi-feuilles)
   documents/        # module de contrôle de documents

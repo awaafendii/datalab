@@ -5,9 +5,10 @@ import { FileText, FileSpreadsheet, FileType2 } from "lucide-react";
 import type { Analysis, ChartImage, Dataset, ManualLogEntry } from "@/lib/types";
 import type { ChartConfig } from "@/lib/charts/types";
 import { LIGHT_THEME } from "@/lib/charts/types";
-import { autoTitle } from "@/lib/charts/catalog";
+import { autoTitle, chartDef } from "@/lib/charts/catalog";
 import { buildFigure } from "@/lib/charts/build";
 import { columnInfos } from "@/lib/charts/data";
+import type { ExcelChartInput } from "@/lib/export-xlsx";
 
 export interface ExportSheetInput {
   name: string;
@@ -27,6 +28,13 @@ type Kind = "xlsx" | "pdf" | "docx";
 // Largeur de rendu des images (px CSS) : nette sur une page A4, rendue en
 // double résolution par Plotly.
 const IMAGE_WIDTH = 1000;
+
+function dataUrlBytes(dataUrl: string): Uint8Array {
+  const bin = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 
 export default function ExportBar({ fileName, sheets }: Props) {
   const [busy, setBusy] = useState<Kind | null>(null);
@@ -58,13 +66,51 @@ export default function ExportBar({ fileName, sheets }: Props) {
     return out;
   };
 
+  // Graphiques pour Excel : tableau des données tracées + graphique Excel
+  // natif quand le type existe dans Excel, image PNG sinon.
+  const excelCharts = async (): Promise<ExcelChartInput[][]> => {
+    const out: ExcelChartInput[][] = [];
+    let done = 0;
+    for (const s of sheets) {
+      const columns = columnInfos(s.analysis.profile);
+      const items: ExcelChartInput[] = [];
+      for (const cfg of s.charts) {
+        done++;
+        setProgress(`Préparation des graphiques (${done}/${chartCount})…`);
+        const fig = buildFigure(cfg, { dataset: s.dataset, columns, theme: LIGHT_THEME, exporting: true });
+        if (fig.empty || !fig.excel) continue;
+        const item: ExcelChartInput = {
+          title: cfg.title.trim() || autoTitle(cfg),
+          typeLabel: chartDef(cfg.type).label,
+          excel: fig.excel,
+          height: cfg.height,
+        };
+        if (!fig.excel.native) {
+          const { figureToPng } = await import("@/components/charts/PlotlyChart");
+          const img = await figureToPng(fig, IMAGE_WIDTH);
+          item.image = dataUrlBytes(img.dataUrl);
+          item.imageWidth = img.width;
+          item.imageHeight = img.height;
+        }
+        items.push(item);
+      }
+      out.push(items);
+    }
+    return out;
+  };
+
   const run = async (kind: Kind) => {
     setError(null);
     setBusy(kind);
     try {
       if (kind === "xlsx") {
+        const charts = withCharts && chartCount > 0 ? await excelCharts() : sheets.map(() => []);
+        setProgress(null);
         const { exportXLSX } = await import("@/lib/export-xlsx");
-        await exportXLSX(fileName, sheets);
+        await exportXLSX(
+          fileName,
+          sheets.map((s, i) => ({ name: s.name, dataset: s.dataset, analysis: s.analysis, manualLog: s.manualLog, excelCharts: charts[i] })),
+        );
         return;
       }
       const images = withCharts && chartCount > 0 ? await renderCharts() : sheets.map(() => []);
@@ -112,7 +158,7 @@ export default function ExportBar({ fileName, sheets }: Props) {
         <label className="cb-toggle" style={{ marginTop: 12 }}>
           <input type="checkbox" checked={withCharts} onChange={(e) => setWithCharts(e.target.checked)} />
           Inclure les {chartCount} graphique{chartCount > 1 ? "s" : ""} personnalisé{chartCount > 1 ? "s" : ""} dans
-          le PDF et le Word
+          les exports
         </label>
       )}
       {progress && (
@@ -122,10 +168,10 @@ export default function ExportBar({ fileName, sheets }: Props) {
       )}
       <p className="hint" style={{ marginTop: 10 }}>
         {multi
-          ? `L'Excel regroupe un onglet de données par feuille (${sheets.length}) plus un sommaire, un profil, des corrélations et des observations combinés. Le PDF et le Word produisent un rapport complet avec une section par feuille.`
-          : "L'Excel contient les données nettoyées + le profil + les corrélations + les observations. Le PDF et le Word produisent un rapport complet."}
+          ? `L'Excel regroupe un onglet de données par feuille (${sheets.length}) plus un sommaire, un profil, des corrélations et des observations combinés, chaque liste étant un vrai tableau Excel (filtres, tri, style). Le PDF et le Word produisent un rapport complet avec une section par feuille.`
+          : "L'Excel contient les données nettoyées + le profil + les corrélations + les observations, chaque liste étant un vrai tableau Excel (filtres, tri, style). Le PDF et le Word produisent un rapport complet."}
         {chartCount > 0 &&
-          " Les graphiques personnalisés y sont insérés en images haute définition ; l'Excel n'en contient pas (non pris en charge par la bibliothèque d'export), téléchargez-les en PNG depuis le créateur si besoin."}
+          " Les graphiques personnalisés y sont repris : dans l'Excel, un onglet « Graphiques » contient le tableau de données de chacun et le graphique Excel natif correspondant, modifiable (image pour les types sans équivalent dans Excel : carte, Sankey, boîte à moustaches…) ; dans le PDF et le Word, des images haute définition."}
       </p>
       {error && (
         <div className="error-box" style={{ marginTop: 12 }}>

@@ -14,6 +14,10 @@ const nextConfig = {
     config.resolve.alias = {
       ...config.resolve.alias,
       glslify$: require.resolve("glslify/browser.js"),
+      // ExcelJS (export Excel, chargé à la demande) : version navigateur
+      // autonome, aussi côté serveur, pour ne pas compiler sa version Node
+      // (flux, fichiers, archiveur).
+      exceljs$: require.resolve("exceljs/dist/exceljs.min.js"),
     };
     return config;
   },

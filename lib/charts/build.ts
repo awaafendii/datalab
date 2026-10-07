@@ -7,6 +7,7 @@ import type { CellValue, Dataset } from "../types";
 import { isEmpty, toNumber } from "../stats";
 import type { ChartConfig, ChartTheme, ColumnInfo, ColumnKind, RoleKey } from "./types";
 import { autoTitle, chartDef, measureLabel } from "./catalog";
+import type { ChartTable, ExcelCell, ExcelChartExport, NativeChart, NativeKind, NativeSeries, NativeTrend } from "./excel-types";
 import {
   AFRICA_BOUNDS,
   GEOJSON_URL,
@@ -20,6 +21,7 @@ import {
   type MapZone,
 } from "./geo";
 import {
+  colorscaleStops,
   contrastText,
   getPalette,
   lighten,
@@ -66,6 +68,8 @@ export interface LegendItem {
 export interface BuiltFigure {
   data: Data[];
   layout: Partial<Layout>;
+  // Export Excel : tableau des données du graphique et, si possible, graphique natif.
+  excel?: ExcelChartExport;
   legend: LegendItem[];
   missing: string[]; // rôles obligatoires non renseignés
   warnings: string[];
@@ -176,7 +180,7 @@ class FigureBuilder {
   }
 
   warn(msg: string) {
-    this.warnings.push(msg);
+    if (!this.warnings.includes(msg)) this.warnings.push(msg);
   }
 
   scale() {
@@ -339,6 +343,108 @@ class FigureBuilder {
     return (k === "date" && this.cfg.dateBucket === "none") || k === "number";
   }
 
+  // ---------------------------------------------------------- export Excel
+
+  excel: ExcelChartExport = { table: null, native: null };
+
+  // Tableau des données du graphique : valeurs réelles (non divisées par
+  // l'unité d'affichage), telles qu'agrégées pour le tracé.
+  setTable(columns: string[], rows: ExcelCell[][], extra: Partial<ChartTable> = {}) {
+    this.excel.table = { columns: uniqueHeaders(columns), rows, ...extra };
+  }
+
+  // En-tête de la colonne i du tableau (nom de série dans Excel).
+  col(i: number): string {
+    return this.excel.table?.columns[i] ?? "";
+  }
+
+  // Format de nombre Excel équivalent aux réglages du graphique.
+  excelNumFmt(values: (number | null | undefined)[]): string {
+    const d = this.nf.decimals;
+    let core: string;
+    if (d >= 0) core = d === 0 ? "#,##0" : `#,##0.${"0".repeat(d)}`;
+    else {
+      let max = 0;
+      let integers = true;
+      for (const v of values) {
+        if (v === null || v === undefined || !Number.isFinite(v)) continue;
+        max = Math.max(max, Math.abs(v));
+        if (!Number.isInteger(v)) integers = false;
+      }
+      core = integers || max / this.div >= 100 ? "#,##0" : "#,##0.00";
+    }
+    const lit = (s: string) => s.replace(/"/g, "");
+    const pre = this.cfg.prefix ? `"${lit(this.cfg.prefix)}"` : "";
+    const suf = this.cfg.suffix ? `"${lit(this.cfg.suffix)}"` : "";
+    return pre + core + suf;
+  }
+
+  // Graphique Excel natif reprenant la mise en forme du graphique.
+  native(kind: NativeKind, values: (number | null | undefined)[], extra: Partial<NativeChart>): NativeChart {
+    const cfg = this.cfg;
+    const legend = { top: "t", bottom: "b", left: "l", right: "r", hidden: null } as const;
+    const base: NativeChart = {
+      kind,
+      grouping: "clustered",
+      series: [],
+      categoryCol: 0,
+      title: cfg.showTitle ? cfg.title.trim() || autoTitle(cfg) : null,
+      xTitle: "",
+      yTitle: "",
+      y2Title: "",
+      legend: legend[cfg.legend],
+      labels: cfg.labels ? "value" : "none",
+      numFmt: this.excelNumFmt(values),
+      dispUnit: dispUnitOf(this.nf.unit),
+      grid: cfg.grid,
+      logScale: cfg.yLog,
+      min: cfg.yMin !== null && !cfg.yLog ? cfg.yMin * this.div : null,
+      max: cfg.yMax !== null && !cfg.yLog ? cfg.yMax * this.div : null,
+      smooth: cfg.lineShape === "spline",
+      markers: cfg.markers,
+      markerSize: cfg.markerSize,
+      lineWidthPt: Math.max(0.75, cfg.lineWidth * 0.75),
+      dash: cfg.dash !== "solid",
+      gapWidth: gapWidthOf(cfg.barGap),
+      font: excelFont(cfg.fontFamily),
+      fontSizePt: Math.round(cfg.fontSize * 0.75 * 2) / 2,
+      ...(cfg.opacity < 1 ? { alpha: cfg.opacity } : {}),
+    };
+    for (const [k, v] of Object.entries(extra)) if (v !== undefined) (base as unknown as Record<string, unknown>)[k] = v;
+    return base;
+  }
+
+  // Une série native par colonne de valeurs (colonnes 1, 2, …).
+  columnSeries(names: string[]): NativeSeries[] {
+    return names.map((name, i) => ({ name: this.col(i + 1), valueCol: i + 1, color: this.color(name, i) }));
+  }
+
+  // Couleurs basse, médiane et haute du dégradé (mise en forme conditionnelle).
+  scaleColors(): [string, string, string] {
+    const cfg = this.cfg;
+    return colorscaleStops(cfg.colorscale, cfg.reverseScale, cfg.scaleFrom, cfg.scaleTo);
+  }
+
+  // Statistiques descriptives par série (et par catégorie) des distributions.
+  distributionTable(series: { name: string; values: number[]; cats?: string[] }[]) {
+    const catCol = this.roles.x[0] && ["box", "violin", "strip"].includes(this.cfg.type) ? this.roles.x[0] : null;
+    const rows: ExcelCell[][] = [];
+    for (const s of series) {
+      if (catCol && s.cats) {
+        const byCat = new Map<string, number[]>();
+        s.values.forEach((v, k) => {
+          const c = s.cats![k];
+          if (!byCat.has(c)) byCat.set(c, []);
+          byCat.get(c)!.push(v);
+        });
+        for (const c of sortedUnique(Array.from(byCat.keys()), this.kind(catCol))) rows.push([s.name, c, ...describe(byCat.get(c)!)]);
+      } else {
+        rows.push([s.name, ...describe(s.values)]);
+      }
+    }
+    this.setTable(["Série", ...(catCol ? [catCol] : []), ...STAT_HEADERS], rows);
+  }
+
   // ------------------------------------------------------------- comparaison
 
   bars() {
@@ -370,6 +476,21 @@ class FigureBuilder {
         textposition: this.labelPosition(),
         cliponaxis: false,
       });
+    });
+    this.setTable([x, ...p.series.map((s) => s.name)], cats.map((c, i) => [c, ...p.series.map((s) => s.values[i])]));
+    this.excel.native = this.native(horizontal ? "bar" : "col", p.series.flatMap((s) => s.values), {
+      grouping: cfg.barMode === "stack" ? "stacked" : cfg.barMode === "percent" ? "percentStacked" : "clustered",
+      overlap: cfg.barMode === "overlay" ? 100 : undefined,
+      dispUnit: cfg.barMode === "percent" ? "none" : undefined,
+      reverseCategories: horizontal,
+      xTitle: this.title(cfg.xTitle, x),
+      yTitle: this.title(cfg.yTitle, cfg.barMode === "percent" ? "Part (%)" : this.measureTitle()),
+      series: p.series.map((s, i) => ({
+        name: this.col(i + 1),
+        valueCol: i + 1,
+        color: this.color(s.name, i),
+        pointColors: single && cfg.varyColors ? cats.map((c, j) => this.color(c, j)) : undefined,
+      })),
     });
     const percent = cfg.barMode === "percent";
     this.layout.barmode = cfg.barMode === "percent" ? "stack" : cfg.barMode;
@@ -431,6 +552,7 @@ class FigureBuilder {
         cliponaxis: false,
       });
     });
+    this.setTable([x, ...p.series.map((s) => s.name)], cats.map((c, i) => [c, ...p.series.map((s) => s.values[i])]));
     if (p.series.length > 1) this.layout.scattermode = "group";
     this.layout.xaxis = this.axis(this.title(cfg.xTitle, x), { type: "category", angle: true });
     this.layout.yaxis = this.axis(this.title(cfg.yTitle, this.measureTitle()), { value: true });
@@ -479,6 +601,19 @@ class FigureBuilder {
         hovertemplate: "%{x}<br>Cumul : %{y:.1f} %<extra></extra>",
       },
     );
+    this.setTable([x, s.name, "Cumul (%)"], cats.map((c, i) => [c, s.values[i], Math.round(cum[i] * 100) / 100]));
+    this.excel.native = this.native("col", s.values, {
+      xTitle: this.title(cfg.xTitle, x),
+      yTitle: this.title(cfg.yTitle, s.name),
+      y2Title: this.title(cfg.y2Title, "Cumul (%)"),
+      y2NumFmt: '0" %"',
+      y2Max: 100,
+      markers: true,
+      series: [
+        { name: this.col(1), valueCol: 1, color: barColor },
+        { name: this.col(2), valueCol: 2, color: lineColor, kind: "line", secondary: true },
+      ],
+    });
     this.layout.bargap = cfg.barGap;
     this.layout.barcornerradius = cfg.cornerRadius;
     this.layout.xaxis = this.axis(this.title(cfg.xTitle, x), { type: "category", angle: true });
@@ -568,6 +703,28 @@ class FigureBuilder {
         });
       }
     });
+    const dateX = continuous && this.kind(x) === "date";
+    this.setTable(
+      [x, ...p.series.map((s) => s.name)],
+      p.categories.map((c, i) => [dateX ? dateCell(c.value) : continuous ? c.value : c.label, ...p.series.map((s) => s.values[i])]),
+    );
+    this.setUnit(units.y);
+    this.excel.native = this.native("col", p.series.filter((s, i) => axisOf(s.name, i) === "y").flatMap((s) => s.values), {
+      xTitle: this.title(cfg.xTitle, x),
+      yTitle: this.title(cfg.yTitle, y1.join(", ")),
+      y2Title: this.title(cfg.y2Title, y2.join(", ")),
+      y2NumFmt: "#,##0",
+      series: p.series.map((s, i) => {
+        const render = cfg.seriesRender[s.name] ?? (i === 0 ? "bar" : "line");
+        return {
+          name: this.col(i + 1),
+          valueCol: i + 1,
+          color: this.color(s.name, i),
+          kind: render === "bar" ? ("col" as const) : render,
+          secondary: axisOf(s.name, i) === "y2",
+        };
+      }),
+    });
     this.layout.barmode = "group";
     this.layout.bargap = cfg.barGap;
     this.layout.barcornerradius = cfg.cornerRadius;
@@ -645,6 +802,19 @@ class FigureBuilder {
           : {}),
       } as Data);
     });
+    const dateX = continuous && this.kind(x) === "date";
+    this.setTable([x, ...series.map((s) => s.name)], xs.map((v, i) => [dateX ? dateCell(v) : v, ...series.map((s) => s.values[i])]));
+    // Au-delà de 5 000 points, un graphique Excel devient lent : image.
+    if (xs.length <= 5000) {
+      const pct = area && cfg.barMode === "percent";
+      this.excel.native = this.native(area ? "area" : "line", series.flatMap((s) => s.values), {
+        grouping: area ? (cfg.barMode === "stack" ? "stacked" : pct ? "percentStacked" : "standard") : "standard",
+        dispUnit: pct ? "none" : undefined,
+        xTitle: this.title(cfg.xTitle, x),
+        yTitle: this.title(cfg.yTitle, pct ? "Part (%)" : this.measureTitle()),
+        series: this.columnSeries(series.map((s) => s.name)),
+      });
+    }
     const kind = this.kind(x);
     this.layout.xaxis = this.axis(this.title(cfg.xTitle, x), {
       type: continuous ? (kind === "date" ? "date" : "linear") : "category",
@@ -694,6 +864,7 @@ class FigureBuilder {
       totals: { marker: { color: tot } },
       cliponaxis: false,
     });
+    this.setTable([x, s.name], [...labels.map((l, i): ExcelCell[] => [l, values[i]]), ...(cfg.showTotal ? [["Total", total] as ExcelCell[]] : [])]);
     this.layout.showlegend = false;
     this.layout.waterfallgap = cfg.barGap;
     this.layout.xaxis = this.axis(this.title(cfg.xTitle, x), { type: "category", angle: true });
@@ -744,6 +915,10 @@ class FigureBuilder {
       increasing: { line: { color: up }, fillcolor: up },
       decreasing: { line: { color: down }, fillcolor: down },
     });
+    this.setTable(
+      [x, "Ouverture", "Plus haut", "Plus bas", "Clôture"],
+      rows.map((g) => [continuous && kind === "date" ? dateCell(g.k!.value) : continuous ? g.k!.value : g.k!.label, g.o, g.h, g.l, g.c]),
+    );
     this.layout.xaxis = {
       ...this.axis(this.title(cfg.xTitle, x), { type: continuous ? (kind === "date" ? "date" : "linear") : "category", angle: true }),
       rangeslider: { visible: false },
@@ -799,6 +974,10 @@ class FigureBuilder {
         textposition: cfg.labels ? "inside" : "none",
       });
     });
+    this.setTable(
+      [task, "Début", "Fin", "Durée (jours)", ...(group ? [group] : [])],
+      shown.map((r) => [r.task, r.start, r.end, Math.round((r.end.getTime() - r.start.getTime()) / 86400000), ...(group ? [r.group] : [])]),
+    );
     if (groups.length === 1 && !group) this.layout.showlegend = false;
     this.layout.barmode = "overlay";
     this.layout.bargap = cfg.barGap;
@@ -847,6 +1026,14 @@ class FigureBuilder {
       insidetextorientation: "horizontal",
       hovertemplate: "%{label}<br>%{customdata} · %{percent}<extra></extra>",
       opacity: cfg.opacity,
+    });
+    this.setTable([x, s.name], items.map((it) => [it.label, it.v]));
+    const pieLabels = { percent: "percent", value: "value", label: "category", "label+percent": "categoryPercent", "label+value": "categoryValue" } as const;
+    this.excel.native = this.native(cfg.hole > 0 ? "doughnut" : "pie", items.map((it) => it.v), {
+      grouping: "standard",
+      holeSize: Math.round(cfg.hole * 100),
+      labels: cfg.labels ? pieLabels[cfg.pieText] : "none",
+      series: [{ name: this.col(1), valueCol: 1, color: colors[0], pointColors: colors }],
     });
     this.layout.uniformtext = { mode: "hide", minsize: Math.max(8, cfg.fontSize - 3) };
     if (cfg.hole >= 0.35) {
@@ -914,6 +1101,15 @@ class FigureBuilder {
       sort: true,
       opacity: cfg.opacity,
     };
+    const hasChildren = new Set(h.parents);
+    const leaves = h.ids.map((id, i) => ({ id, v: h.values[i] })).filter((n) => n.id !== ROOT && !hasChildren.has(n.id));
+    this.setTable(
+      [...roles.path, measureLabel(cfg.agg, value)],
+      leaves.map((n) => {
+        const parts = n.id.split(" › ");
+        return [...roles.path.map((_, k) => parts[k] ?? ""), n.v];
+      }),
+    );
     this.data.push(trace as Data);
     this.layout.showlegend = false;
     this.layout.margin = { ...this.layout.margin, l: 8, r: 8, b: 8 };
@@ -945,6 +1141,7 @@ class FigureBuilder {
       hovertemplate: "%{y}<br>%{customdata}<br>%{percentInitial:.1%} de la 1re étape<br>%{percentPrevious:.1%} de l'étape précédente<extra></extra>",
       connector: { fillcolor: withAlpha(Array.isArray(colors) ? colors[0] : color, 0.15), line: { width: 0 } },
     });
+    this.setTable([x, s.name], cats.map((c, i) => [c, s.values[i]]));
     this.layout.showlegend = false;
     this.layout.yaxis = this.axis(this.title(cfg.yTitle, ""), { type: "category" });
     this.layout.xaxis = { ...this.axis(""), visible: false };
@@ -1014,6 +1211,40 @@ class FigureBuilder {
         });
       }
     });
+    {
+      const nb = Math.max(1, Math.round((bins.end - bins.start) / bins.size));
+      const edge = (v: number) => `${v.toLocaleString("fr-FR", { maximumFractionDigits: 4 })}${suffix}`;
+      const counts = series.map((s) => {
+        const c = new Array<number>(nb).fill(0);
+        for (const v of s.values) {
+          const k = Math.min(nb - 1, Math.floor((v - bins.start) / bins.size));
+          if (k >= 0) c[k]++;
+        }
+        let out = c.map((n) =>
+          cfg.histNorm === "percent" ? (n / s.values.length) * 100 : cfg.histNorm === "density" ? n / (s.values.length * bins.size) : n,
+        );
+        if (cfg.cumulative) {
+          let run = 0;
+          out = out.map((n) => (run += n));
+        }
+        return out.map((n) => Math.round(n * 10000) / 10000);
+      });
+      this.setTable(
+        ["Classe", ...series.map((s) => s.name)],
+        counts[0].map((_, k) => [`${edge(bins.start + k * bins.size)} – ${edge(bins.start + (k + 1) * bins.size)}`, ...counts.map((c) => c[k])]),
+      );
+      const histTitle = cfg.cumulative ? "Effectif cumulé" : cfg.histNorm === "percent" ? "% des observations" : cfg.histNorm === "density" ? "Densité" : "Effectif";
+      this.excel.native = this.native("col", counts.flat(), {
+        grouping: cfg.barMode === "stack" ? "stacked" : "clustered",
+        overlap: cfg.barMode === "overlay" ? 100 : undefined,
+        gapWidth: Math.round(cfg.barGap * 100),
+        dispUnit: "none",
+        numFmt: cfg.histNorm === "count" ? "#,##0" : "#,##0.00",
+        xTitle: this.title(cfg.xTitle, this.roles.y.length === 1 ? this.roles.y[0] : "Valeur"),
+        yTitle: this.title(cfg.yTitle, histTitle),
+        series: this.columnSeries(series.map((s) => s.name)),
+      });
+    }
     this.layout.barmode = cfg.barMode === "percent" ? "stack" : cfg.barMode;
     this.layout.bargap = cfg.barGap;
     const yLabel = cfg.cumulative ? "Effectif cumulé" : cfg.histNorm === "percent" ? "% des observations" : cfg.histNorm === "density" ? "Densité" : "Effectif";
@@ -1094,6 +1325,7 @@ class FigureBuilder {
         });
       }
     });
+    this.distributionTable(series);
     if (sampled) this.warn("Plus de 5 000 points par série : un échantillon régulier de 5 000 points est affiché.");
     if (hasCats && series.length > 1) {
       if (cfg.type === "violin") this.layout.violinmode = "group";
@@ -1130,6 +1362,7 @@ class FigureBuilder {
       });
     });
     if (!any) return;
+    this.distributionTable(this.numericSeries());
     const valueTitle = this.roles.y.length === 1 ? this.roles.y[0] : "Valeur";
     this.layout.xaxis = { ...this.axis(this.title(cfg.xTitle, valueTitle)), tickformat: ",~f", ticksuffix: suffix };
     this.layout.yaxis = { ...this.axis(this.title(cfg.yTitle, "Densité"), { value: true }), tickformat: ".2~g", tickprefix: "", ticksuffix: "" };
@@ -1156,6 +1389,7 @@ class FigureBuilder {
       });
     });
     if (!any) return;
+    this.distributionTable(this.numericSeries());
     const valueTitle = this.roles.y.length === 1 ? this.roles.y[0] : "Valeur";
     this.layout.xaxis = { ...this.axis(this.title(cfg.xTitle, valueTitle)), tickformat: ",~f", ticksuffix: suffix };
     this.layout.yaxis = { ...this.axis(this.title(cfg.yTitle, "Part cumulée (%)"), { value: true }), range: [0, 101], autorange: false, ticksuffix: " %", tickprefix: "", tickformat: ",~f" };
@@ -1293,6 +1527,56 @@ class FigureBuilder {
         }
       }
     });
+    {
+      const LIMIT = 10000;
+      const multi = list.length > 1;
+      const xName = roles.x[0];
+      const columns = [
+        ...(multi ? [group && !numericColor ? group : "Série"] : []),
+        xName,
+        ys.length === 1 ? ys[0] : "Valeur",
+        ...(bubble ? [sizeCol ?? "Taille"] : []),
+        ...(numericColor ? [group!] : []),
+      ];
+      const rows: ExcelCell[][] = [];
+      const nseries: NativeSeries[] = [];
+      list.forEach((s, i) => {
+        const start = rows.length;
+        const take = Math.max(0, Math.min(s.y.length, LIMIT - rows.length));
+        const order = Array.from({ length: take }, (_, k) => k).sort((a, b) => s.xNum[a] - s.xNum[b]);
+        for (const k of order) {
+          rows.push([
+            ...(multi ? [s.name] : []),
+            xKind === "date" ? new Date(s.xNum[k]) : s.xNum[k],
+            s.y[k],
+            ...(bubble ? [s.size[k]] : []),
+            ...(numericColor ? [s.color[k]] : []),
+          ]);
+        }
+        if (rows.length === start) return;
+        nseries.push({
+          name: multi ? s.name || "Série" : columns[multi ? 2 : 1],
+          literalName: multi,
+          color: this.color(s.name, i),
+          xCol: multi ? 1 : 0,
+          valueCol: multi ? 2 : 1,
+          sizeCol: bubble ? (multi ? 3 : 2) : undefined,
+          rowStart: start,
+          rowEnd: rows.length - 1,
+          trend: bubble ? undefined : trendOf(cfg),
+        });
+      });
+      this.setTable(columns, rows);
+      if (total > LIMIT) this.excel.note = `Tableau limité aux ${LIMIT.toLocaleString("fr-FR")} premiers points (${total.toLocaleString("fr-FR")} au total).`;
+      this.excel.native = this.native(bubble ? "bubble" : "scatter", list.flatMap((s) => s.y), {
+        grouping: "standard",
+        labels: "none",
+        xTitle: this.title(cfg.xTitle, xName),
+        yTitle: this.title(cfg.yTitle, ys.length === 1 ? ys[0] : ""),
+        xNumFmt: xKind === "date" ? "dd/mm/yyyy" : "#,##0",
+        series: nseries,
+      });
+    }
     if (list.length === 1 && cfg.trend === "none" && !numericColor) this.layout.showlegend = false;
     const yTitle = ys.length === 1 ? ys[0] : "";
     this.layout.xaxis = { ...this.axis(this.title(cfg.xTitle, roles.x[0])), showgrid: cfg.grid, ...(xKind === "date" ? { type: "date" as const } : { tickformat: ",~f", ticksuffix: xu.label }) };
@@ -1336,6 +1620,9 @@ class FigureBuilder {
       ygap: 1,
       colorbar: { title: { text: esc(measure) }, thickness: 14, tickformat: d3Format(this.nf), ticksuffix: this.unitLabel },
     });
+    this.setTable([roles.group[0], ...p.categories.map((c) => c.label)], rows.map((s) => [s.name, ...s.values]), {
+      colorScale: { colors: this.scaleColors() },
+    });
     this.layout.xaxis = { ...this.axis(this.title(cfg.xTitle, x), { type: "category", angle: true }), showline: false };
     this.layout.yaxis = { ...this.axis(this.title(cfg.yTitle, roles.group[0]), { type: "category", reversed: true }), showline: false };
   }
@@ -1372,6 +1659,9 @@ class FigureBuilder {
       xgap: 2,
       ygap: 2,
       colorbar: { title: { text: "r" }, thickness: 14 },
+    });
+    this.setTable(["Variable", ...dims], dims.map((d, i) => [d, ...z[i].map((v) => (v === null ? null : Math.round(v * 1000) / 1000))]), {
+      colorScale: { colors: this.scaleColors(), min: -1, mid: 0, max: 1 },
     });
     this.layout.xaxis = { ...this.axis("", { type: "category", angle: true }), showline: false, showgrid: false };
     this.layout.yaxis = { ...this.axis("", { type: "category", reversed: true }), showline: false, showgrid: false };
@@ -1551,6 +1841,7 @@ class FigureBuilder {
         hovertemplate: "%{source.label} → %{target.label}<br>%{customdata}<extra></extra>",
       },
     } as Data);
+    this.setTable(["Source", "Cible", measureLabel(cfg.agg, value)], f.links.map((l) => [f.nodes[l.source].label, f.nodes[l.target].label, l.value]));
     this.layout.showlegend = false;
   }
 
@@ -1604,6 +1895,12 @@ class FigureBuilder {
         hovertemplate: "%{theta}<br>%{customdata}<extra>%{fullData.name}</extra>",
       });
     });
+    this.setTable([x, ...p.series.map((s) => s.name)], theta.map((c, i) => [c, ...p.series.map((s) => s.values[i])]));
+    this.excel.native = this.native("radar", p.series.flatMap((s) => s.values), {
+      grouping: "standard",
+      radarFilled: cfg.fill,
+      series: this.columnSeries(p.series.map((s) => s.name)),
+    });
     this.layout.polar = this.polarAxes(theta.length);
   }
 
@@ -1629,6 +1926,7 @@ class FigureBuilder {
         hovertemplate: "%{theta}<br>%{customdata}<extra>%{fullData.name}</extra>",
       });
     });
+    this.setTable([x, ...p.series.map((s) => s.name)], theta.map((c, i) => [c, ...p.series.map((s) => s.values[i])]));
     this.layout.polar = { ...this.polarAxes(theta.length), barmode: "stack", bargap: cfg.barGap };
   }
 
@@ -1752,6 +2050,18 @@ class FigureBuilder {
       });
     });
     if (!any) return;
+    const hasTarget = cfg.target !== null;
+    this.setTable(
+      ["Indicateur", "Valeur", ...(hasTarget ? ["Objectif", "Écart"] : [])],
+      cols.map((col) => {
+        const v = this.aggregateAll(col);
+        return [
+          measureLabel(cfg.agg === "none" ? "sum" : cfg.agg, col),
+          v,
+          ...(hasTarget ? [cfg.target, v === null ? null : v - cfg.target!] : []),
+        ];
+      }),
+    );
     this.layout.grid = { rows: 1, columns: n, pattern: "independent" };
     if (!cfg.title.trim()) this.layout.title = undefined;
     this.layout.margin = { l: 10, r: 10, t: cfg.title.trim() && cfg.showTitle ? 60 : 20, b: 10 };
@@ -1797,6 +2107,7 @@ class FigureBuilder {
         threshold: target !== null ? { line: { color: this.text, width: 3 }, thickness: 0.85, value: d(target) } : undefined,
       },
     });
+    this.setTable(["Indicateur", "Valeur", "Minimum", "Maximum", ...(target !== null ? ["Objectif"] : [])], [[name, v, lo, hi, ...(target !== null ? [target] : [])]]);
     if (!cfg.title.trim()) this.layout.title = undefined;
     this.layout.margin = { l: 55, r: 55, t: cfg.title.trim() && cfg.showTitle ? 70 : 40, b: 20 };
   }
@@ -1994,6 +2305,7 @@ class FigureBuilder {
         ),
       );
     }
+    this.setTable([x, "Code", measureLabel(cfg.agg === "none" ? "sum" : cfg.agg, roles.y[0] ?? null)], codes.map((c, i) => [names[i], c, s.values[i]]));
     this.layout.geo = this.geoLayout(level, Boolean(geojson));
     this.layout.showlegend = false;
     this.mapSource(level);
@@ -2131,6 +2443,30 @@ class FigureBuilder {
         marker,
       } as Data);
     });
+    {
+      const multi = series.length > 1 || Boolean(roles.group[0] && !numericColor);
+      const measure = roles.y[0] || roles.x[0] ? measureLabel(cfg.agg === "none" ? "sum" : cfg.agg, roles.y[0] ?? null) : "Valeur";
+      this.setTable(
+        [
+          ...(roles.x[0] ? [roles.x[0]] : []),
+          ...(multi ? [roles.group[0] ?? "Série"] : []),
+          "Latitude",
+          "Longitude",
+          ...(numericColor ? [roles.group[0]!] : []),
+          ...(sized ? [measure] : []),
+        ],
+        series.flatMap((s) =>
+          s.lat.map((la, k): ExcelCell[] => [
+            ...(roles.x[0] ? [s.text[k]] : []),
+            ...(multi ? [s.name] : []),
+            la,
+            s.lon[k],
+            ...(numericColor ? [s.color[k]] : []),
+            ...(sized ? [s.size[k]] : []),
+          ]),
+        ),
+      );
+    }
     // Guinée : cadrage sur les contours ; coordonnées : sur les points.
     this.layout.geo = this.geoLayout(level, Boolean(GEOJSON_URL[level]) || !roles.x[0]);
     if (series.length <= 1 || numericColor) this.layout.showlegend = false;
@@ -2211,6 +2547,77 @@ class FigureBuilder {
   }
 }
 
+// --------------------------------------------------- utilitaires d'export Excel
+
+// En-têtes de tableau Excel : non vides et uniques.
+function uniqueHeaders(names: string[]): string[] {
+  const seen = new Map<string, number>();
+  return names.map((raw) => {
+    const base = (raw ?? "").toString().trim() || "Valeur";
+    const n = (seen.get(base.toLowerCase()) ?? 0) + 1;
+    seen.set(base.toLowerCase(), n);
+    return n === 1 ? base : `${base} (${n})`;
+  });
+}
+
+function dispUnitOf(unit: ChartConfig["unit"]): NativeChart["dispUnit"] {
+  return unit === "k" ? "thousands" : unit === "M" ? "millions" : unit === "Md" ? "billions" : "none";
+}
+
+// Espacement Plotly (fraction de la catégorie) → « largeur de l'intervalle » Excel.
+function gapWidthOf(gap: number): number {
+  const g = Math.min(Math.max(gap, 0), 0.9);
+  return Math.round((g / (1 - g)) * 100);
+}
+
+// Première police de la pile CSS (« "Segoe UI", system-ui… » → Segoe UI).
+function excelFont(family: string): string {
+  return family.split(",")[0].trim().replace(/^["']|["']$/g, "") || "Calibri";
+}
+
+function dateCell(v: string | number): ExcelCell {
+  if (typeof v !== "string") return v;
+  return parseDate(v) ?? v;
+}
+
+function trendOf(cfg: ChartConfig): NativeTrend | undefined {
+  switch (cfg.trend) {
+    case "linear":
+      return { type: "linear" };
+    case "poly2":
+      return { type: "poly", order: 2 };
+    case "poly3":
+      return { type: "poly", order: 3 };
+    case "exp":
+      return { type: "exp" };
+    case "log":
+      return { type: "log" };
+    case "power":
+      return { type: "power" };
+    case "movavg":
+      return { type: "movingAvg", period: Math.max(2, cfg.movingWindow) };
+    default:
+      return undefined;
+  }
+}
+
+const STAT_HEADERS = ["Effectif", "Moyenne", "Écart-type", "Minimum", "1er quartile", "Médiane", "3e quartile", "Maximum"];
+
+function describe(values: number[]): ExcelCell[] {
+  const s = values.filter(Number.isFinite).sort((a, b) => a - b);
+  const n = s.length;
+  if (n === 0) return [0, null, null, null, null, null, null, null];
+  const q = (p: number) => {
+    const pos = (n - 1) * p;
+    const lo = Math.floor(pos);
+    return s[lo] + (s[Math.ceil(pos)] - s[lo]) * (pos - lo);
+  };
+  const mean = s.reduce((a, b) => a + b, 0) / n;
+  const sd = n > 1 ? Math.sqrt(s.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1)) : 0;
+  const r = (v: number) => Math.round(v * 10000) / 10000;
+  return [n, r(mean), r(sd), s[0], r(q(0.25)), r(q(0.5)), r(q(0.75)), s[n - 1]];
+}
+
 export function buildFigure(cfg: ChartConfig, ctx: BuildContext): BuiltFigure {
   const def = chartDef(cfg.type);
   const byName = new Map(ctx.columns.map((c) => [c.name, c]));
@@ -2249,5 +2656,6 @@ export function buildFigure(cfg: ChartConfig, ctx: BuildContext): BuiltFigure {
     missing: [],
     warnings: b.warnings,
     empty: b.data.length === 0,
+    excel: b.data.length > 0 ? b.excel : undefined,
   };
 }
