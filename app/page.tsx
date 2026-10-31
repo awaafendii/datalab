@@ -7,8 +7,11 @@ import {
   CheckCircle2,
   Database,
   Eye,
+  Gauge,
   Palette,
+  Sigma,
   Sparkles,
+  Table2,
   Wand2,
 } from "lucide-react";
 import AppNav from "@/components/AppNav";
@@ -21,6 +24,9 @@ import CleaningPanel from "@/components/CleaningPanel";
 import Charts, { type ChartPreset } from "@/components/Charts";
 import ChartBuilder from "@/components/charts/ChartBuilder";
 import MLPanel from "@/components/MLPanel";
+import PivotPanel from "@/components/PivotPanel";
+import KpiPanel from "@/components/KpiPanel";
+import StatsPanel from "@/components/StatsPanel";
 import ExportBar from "@/components/ExportBar";
 import ReviewPanel from "@/components/ReviewPanel";
 import SessionBar from "@/components/SessionBar";
@@ -40,6 +46,9 @@ import { detectContextHeuristic } from "@/lib/sectors";
 import { createChart } from "@/lib/charts/catalog";
 import { columnInfos } from "@/lib/charts/data";
 import type { ChartConfig } from "@/lib/charts/types";
+import { autoKpis, type KpiDef } from "@/lib/kpi/kpi";
+import { autoPivotConfig } from "@/lib/pivot/engine";
+import type { PivotConfig } from "@/lib/pivot/types";
 import {
   DEFAULT_CLEANING,
   EMPTY_REVIEW,
@@ -51,6 +60,17 @@ import {
 } from "@/lib/types";
 
 type Stage = "upload" | "workspace";
+
+// TCD vide (placeholder avant nettoyage) ; remplacé par autoPivotConfig(profil)
+// dès que la feuille est analysée.
+const EMPTY_PIVOT: PivotConfig = {
+  rows: [],
+  columns: [],
+  values: [],
+  filters: [],
+  rowSubtotals: true,
+  grandTotal: true,
+};
 
 function formatCell(v: unknown): string {
   if (v === null || v === undefined || v === "") return "vide";
@@ -92,15 +112,18 @@ export default function Home() {
           const dataset = wb.sheets[i].dataset;
           const review = s.review ?? EMPTY_REVIEW;
           const result = s.cleaned ? cleanDataset(dataset, s.options, review) : null;
+          const analysis = result ? analyzeDataset(result.dataset) : null;
           return {
             name: s.name,
             dataset,
             options: s.options,
             result,
-            analysis: result ? analyzeDataset(result.dataset) : null,
+            analysis,
             aiContext: s.aiContext,
             charts: s.charts ?? [],
             review,
+            kpis: s.kpis ?? (analysis ? autoKpis(analysis.profile) : []),
+            pivot: s.pivot ?? (analysis ? autoPivotConfig(analysis.profile) : EMPTY_PIVOT),
           };
         });
         savedWorkbook.current = wb;
@@ -143,6 +166,8 @@ export default function Home() {
             aiContext: s.aiContext,
             charts: s.charts,
             review: s.review,
+            kpis: s.kpis,
+            pivot: s.pivot,
           })),
         });
         setSessionError(null);
@@ -187,6 +212,8 @@ export default function Home() {
         aiContext: null,
         charts: [],
         review: EMPTY_REVIEW,
+        kpis: [],
+        pivot: EMPTY_PIVOT,
       })),
     );
     setActiveIndex(0);
@@ -203,6 +230,14 @@ export default function Home() {
     setSheets((prev) =>
       prev.map((s, i) => (i === activeIndex ? { ...s, charts } : s)),
     );
+  };
+
+  const setActiveKpis = (kpis: KpiDef[]) => {
+    setSheets((prev) => prev.map((s, i) => (i === activeIndex ? { ...s, kpis } : s)));
+  };
+
+  const setActivePivot = (pivot: PivotConfig) => {
+    setSheets((prev) => prev.map((s, i) => (i === activeIndex ? { ...s, pivot } : s)));
   };
 
   // « Personnaliser » un graphique de l'analyse automatique : il est recopié
@@ -242,7 +277,9 @@ export default function Home() {
           if (i !== activeIndex) return s;
           const res = cleanDataset(s.dataset, s.options, s.review);
           const ana = analyzeDataset(res.dataset);
-          return { ...s, result: res, analysis: ana };
+          const kpis = s.kpis.length ? s.kpis : autoKpis(ana.profile);
+          const pivot = s.pivot.rows.length || s.pivot.values.length ? s.pivot : autoPivotConfig(ana.profile);
+          return { ...s, result: res, analysis: ana, kpis, pivot };
         }),
       );
       setWorking(false);
@@ -264,7 +301,9 @@ export default function Home() {
           if (s.result !== null) return s;
           const res = cleanDataset(s.dataset, opts, s.review);
           const ana = analyzeDataset(res.dataset);
-          return { ...s, options: opts, result: res, analysis: ana };
+          const kpis = s.kpis.length ? s.kpis : autoKpis(ana.profile);
+          const pivot = s.pivot.rows.length || s.pivot.values.length ? s.pivot : autoPivotConfig(ana.profile);
+          return { ...s, options: opts, result: res, analysis: ana, kpis, pivot };
         }),
       );
       setWorking(false);
@@ -288,6 +327,7 @@ export default function Home() {
     savedWorkbook.current = null;
     clearSession();
   };
+
 
   const cleanedSheets = sheets.filter((s) => s.result !== null && s.analysis !== null);
   const otherPendingCount = sheets.filter(
@@ -521,6 +561,18 @@ export default function Home() {
 
                 <div className="card">
                   <h2>
+                    <Gauge size={20} /> Indicateurs clés (KPI)
+                  </h2>
+                  <KpiPanel
+                    dataset={active.result.dataset}
+                    profile={active.analysis.profile}
+                    defs={active.kpis}
+                    onChange={setActiveKpis}
+                  />
+                </div>
+
+                <div className="card">
+                  <h2>
                     <BarChart3 size={20} /> Analyse visuelle
                   </h2>
                   <p className="subtitle">
@@ -528,6 +580,28 @@ export default function Home() {
                     variables catégorielles et corrélations.
                   </p>
                   <Charts analysis={active.analysis} onCustomize={customizeChart} />
+                </div>
+
+                <div className="card">
+                  <h2>
+                    <Table2 size={20} /> Tableau croisé dynamique
+                  </h2>
+                  <PivotPanel
+                    dataset={active.result.dataset}
+                    profile={active.analysis.profile}
+                    config={active.pivot}
+                    onChange={setActivePivot}
+                  />
+                </div>
+
+                <div className="card">
+                  <h2>
+                    <Sigma size={20} /> Statistiques
+                  </h2>
+                  <StatsPanel
+                    dataset={active.result.dataset}
+                    profile={active.analysis.profile}
+                  />
                 </div>
 
                 <div className="card">
@@ -615,6 +689,8 @@ export default function Home() {
                     analysis: s.analysis!,
                     charts: s.charts,
                     manualLog: s.result!.manualLog,
+                    kpis: s.kpis,
+                    pivot: s.pivot,
                   }))}
                 />
               )}

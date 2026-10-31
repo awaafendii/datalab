@@ -1,4 +1,22 @@
-import type { Analysis, ChartImage, Dataset, ManualLogEntry } from "./types";
+import type {
+  Analysis,
+  ChartImage,
+  Dataset,
+  KMeansResult,
+  ManualLogEntry,
+  RegressionResult,
+} from "./types";
+import type { KpiDef } from "./kpi/kpi";
+import type { PivotConfig } from "./pivot/types";
+import {
+  clusteringSection,
+  frequencyTables,
+  kpiTable,
+  pivotTable,
+  regressionSection,
+  statsTable,
+  type Cell,
+} from "./export-sections";
 
 // Une feuille prête à l'export : données nettoyées + analyse correspondante.
 export interface ExportSheet {
@@ -7,6 +25,12 @@ export interface ExportSheet {
   analysis: Analysis;
   charts?: ChartImage[]; // graphiques personnalisés (créateur de graphiques)
   manualLog?: ManualLogEntry[]; // décisions manuelles de nettoyage
+  kpis?: KpiDef[];
+  pivot?: PivotConfig;
+  kmeans?: KMeansResult | null;
+  regression?: RegressionResult | null;
+  clusterImage?: ChartImage; // nuage de points du clustering
+  regressionImage?: ChartImage; // observé vs prédit
 }
 
 // Construit le rapport PDF et renvoie l'objet jsPDF (testable hors navigateur).
@@ -20,6 +44,57 @@ async function buildPDFDoc(fileName: string, sheets: ExportSheet[]) {
   const marginX = 14;
   const multi = sheets.length > 1;
   let y = 18;
+
+  const fmtC = (v: Cell): string =>
+    v === null
+      ? ""
+      : typeof v === "number"
+        ? Number.isFinite(v)
+          ? v.toLocaleString("fr-FR", { maximumFractionDigits: 2 })
+          : ""
+        : v;
+
+  // Ajoute une section « titre + tableau » (avec saut de page si nécessaire).
+  const addSection = (title: string, columns: string[], rows: Cell[][], note?: string) => {
+    if (y > 240) {
+      doc.addPage();
+      y = 18;
+    }
+    doc.setFontSize(13);
+    doc.text(title, marginX, y);
+    if (note) {
+      y += 5;
+      doc.setFontSize(8);
+      doc.setTextColor(110);
+      const ls = doc.splitTextToSize(note, 180);
+      doc.text(ls, marginX, y);
+      y += ls.length * 4 + 1;
+      doc.setTextColor(0);
+    }
+    autoTable(doc, {
+      startY: y + 2,
+      head: [columns],
+      body: rows.map((r) => r.map(fmtC)),
+      theme: "striped",
+      headStyles: { fillColor: [37, 99, 235], fontSize: 8 },
+      styles: { fontSize: 7.5, cellPadding: 1.3 },
+      margin: { left: marginX, right: marginX },
+    });
+    y = (doc as any).lastAutoTable.finalY + 8;
+  };
+
+  // Ajoute une image de graphique sur la largeur utile (saut de page si besoin).
+  const addChartImage = (img: ChartImage) => {
+    const width = doc.internal.pageSize.getWidth() - 2 * marginX;
+    const bottom = doc.internal.pageSize.getHeight() - 16;
+    const height = (width * img.height) / img.width;
+    if (y + height > bottom) {
+      doc.addPage();
+      y = 18;
+    }
+    doc.addImage(img.dataUrl, "PNG", marginX, y, width, height, undefined, "FAST");
+    y += height + 6;
+  };
 
   doc.setFontSize(18);
   doc.text("Rapport d'analyse de données", marginX, y);
@@ -150,6 +225,55 @@ async function buildPDFDoc(fileName: string, sheets: ExportSheet[]) {
         margin: { left: marginX, right: marginX },
       });
       y = (doc as any).lastAutoTable.finalY + 8;
+    }
+
+    // Indicateurs clés (KPI)
+    const kpi = s.kpis ? kpiTable(s.dataset, s.kpis) : null;
+    if (kpi) addSection(kpi.title, kpi.columns, kpi.rows);
+
+    // Statistiques descriptives
+    const stats = statsTable(s.dataset, s.analysis.profile);
+    if (stats) addSection(stats.title, stats.columns, stats.rows);
+
+    // Fréquences (jusqu'à 4 colonnes catégorielles, top 15)
+    for (const f of frequencyTables(s.dataset, s.analysis.profile, 15, 4)) {
+      addSection(f.title, f.columns, f.rows);
+    }
+
+    // Tableau croisé dynamique
+    const piv = s.pivot ? pivotTable(s.dataset, s.pivot) : null;
+    if (piv) addSection(piv.title, piv.columns, piv.rows);
+
+    // Clustering (k-means)
+    const clu = clusteringSection(s.kmeans ?? null);
+    if (clu) {
+      addSection(clu.summary.title, clu.summary.columns, clu.summary.rows, clu.note);
+      if (s.clusterImage) addChartImage(s.clusterImage);
+    }
+
+    // Régression linéaire
+    const reg = regressionSection(s.regression ?? null);
+    if (reg) {
+      if (y > 250) {
+        doc.addPage();
+        y = 18;
+      }
+      doc.setFontSize(13);
+      doc.text(reg.coefficients.title, marginX, y);
+      y += 6;
+      doc.setFontSize(9);
+      for (const line of reg.lines) {
+        const ls = doc.splitTextToSize(line, 180);
+        if (y > 275) {
+          doc.addPage();
+          y = 18;
+        }
+        doc.text(ls, marginX, y);
+        y += ls.length * 4.5 + 1;
+      }
+      y += 2;
+      addSection("Coefficients", reg.coefficients.columns, reg.coefficients.rows);
+      if (s.regressionImage) addChartImage(s.regressionImage);
     }
 
     // Décisions manuelles de nettoyage

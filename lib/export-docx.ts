@@ -1,5 +1,23 @@
-import type { Analysis, ChartImage, Dataset, ManualLogEntry } from "./types";
+import type {
+  Analysis,
+  ChartImage,
+  Dataset,
+  KMeansResult,
+  ManualLogEntry,
+  RegressionResult,
+} from "./types";
 import { loadSaveAs } from "./save-file";
+import type { KpiDef } from "./kpi/kpi";
+import type { PivotConfig } from "./pivot/types";
+import {
+  clusteringSection,
+  frequencyTables,
+  kpiTable,
+  pivotTable,
+  regressionSection,
+  statsTable,
+  type Cell,
+} from "./export-sections";
 
 // Une feuille prête à l'export : données nettoyées + analyse correspondante.
 export interface ExportSheet {
@@ -8,6 +26,12 @@ export interface ExportSheet {
   analysis: Analysis;
   charts?: ChartImage[]; // graphiques personnalisés (créateur de graphiques)
   manualLog?: ManualLogEntry[]; // décisions manuelles de nettoyage
+  kpis?: KpiDef[];
+  pivot?: PivotConfig;
+  kmeans?: KMeansResult | null;
+  regression?: RegressionResult | null;
+  clusterImage?: ChartImage; // nuage de points du clustering
+  regressionImage?: ChartImage; // observé vs prédit
 }
 
 // Construit le document Word et renvoie { doc, Packer } (testable hors navigateur).
@@ -60,6 +84,30 @@ async function buildDocument(fileName: string, sheets: ExportSheet[]) {
     new TableRow({ children: values.map((v) => cell(v)) });
 
   const fullWidth = { size: 100, type: WidthType.PERCENTAGE };
+
+  const fmtC = (v: Cell): string =>
+    v === null
+      ? ""
+      : typeof v === "number"
+        ? Number.isFinite(v)
+          ? v.toLocaleString("fr-FR", { maximumFractionDigits: 2 })
+          : ""
+        : v;
+  const sectionTable = (columns: string[], rows: Cell[][]) =>
+    new Table({ width: fullWidth, rows: [headerRow(columns), ...rows.map((r) => dataRow(r.map(fmtC)))] });
+  const imageParagraph = (img: ChartImage) => {
+    const width = 600;
+    return new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new ImageRun({
+          data: dataUrlBytes(img.dataUrl),
+          transformation: { width, height: Math.round((width * img.height) / img.width) },
+          altText: { name: img.title, title: img.title, description: img.title },
+        }),
+      ],
+    });
+  };
 
   const children: (InstanceType<typeof Paragraph> | InstanceType<typeof Table>)[] = [
     new Paragraph({
@@ -169,6 +217,69 @@ async function buildDocument(fileName: string, sheets: ExportSheet[]) {
           ],
         }),
       );
+    }
+
+    // Indicateurs clés (KPI)
+    const kpi = s.kpis ? kpiTable(s.dataset, s.kpis) : null;
+    if (kpi) {
+      children.push(
+        new Paragraph({ text: "" }),
+        new Paragraph({ text: kpi.title, heading: sectionHeading }),
+        sectionTable(kpi.columns, kpi.rows),
+      );
+    }
+
+    // Statistiques descriptives
+    const stats = statsTable(s.dataset, s.analysis.profile);
+    if (stats) {
+      children.push(
+        new Paragraph({ text: "" }),
+        new Paragraph({ text: stats.title, heading: sectionHeading }),
+        sectionTable(stats.columns, stats.rows),
+      );
+    }
+
+    // Fréquences (jusqu'à 4 colonnes catégorielles)
+    for (const f of frequencyTables(s.dataset, s.analysis.profile, 20, 4)) {
+      children.push(
+        new Paragraph({ text: "" }),
+        new Paragraph({ text: f.title, heading: sectionHeading }),
+        sectionTable(f.columns, f.rows),
+      );
+    }
+
+    // Tableau croisé dynamique
+    const piv = s.pivot ? pivotTable(s.dataset, s.pivot) : null;
+    if (piv) {
+      children.push(
+        new Paragraph({ text: "" }),
+        new Paragraph({ text: piv.title, heading: sectionHeading }),
+        sectionTable(piv.columns, piv.rows),
+      );
+    }
+
+    // Clustering (k-means)
+    const clu = clusteringSection(s.kmeans ?? null);
+    if (clu) {
+      children.push(
+        new Paragraph({ text: "" }),
+        new Paragraph({ text: clu.summary.title, heading: sectionHeading }),
+        new Paragraph({ children: [new TextRun({ text: clu.note, italics: true, color: "666666", size: 18 })] }),
+        sectionTable(clu.summary.columns, clu.summary.rows),
+      );
+      if (s.clusterImage) children.push(imageParagraph(s.clusterImage));
+    }
+
+    // Régression linéaire
+    const reg = regressionSection(s.regression ?? null);
+    if (reg) {
+      children.push(
+        new Paragraph({ text: "" }),
+        new Paragraph({ text: reg.coefficients.title, heading: sectionHeading }),
+        ...reg.lines.map((l) => new Paragraph({ children: [new TextRun({ text: l, size: 18 })] })),
+        sectionTable(reg.coefficients.columns, reg.coefficients.rows),
+      );
+      if (s.regressionImage) children.push(imageParagraph(s.regressionImage));
     }
 
     // Décisions manuelles de nettoyage

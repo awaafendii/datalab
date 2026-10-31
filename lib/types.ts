@@ -1,6 +1,8 @@
 // Types partagés de la plateforme d'analyse de données.
 
 import type { ChartConfig } from "./charts/types";
+import type { KpiDef } from "./kpi/kpi";
+import type { PivotConfig } from "./pivot/types";
 
 export type CellValue = string | number | boolean | null;
 
@@ -308,6 +310,11 @@ export interface SheetState {
   // Décisions manuelles sur les cellules vides et atypiques de cette feuille
   // (propres à la feuille : jamais recopiées vers les autres).
   review: ManualReview;
+  // Indicateurs clés (KPI) et tableau croisé dynamique propres à la feuille :
+  // définis au nettoyage (valeurs automatiques) puis personnalisés par
+  // l'utilisateur. Repris tels quels dans l'export Excel propre.
+  kpis: KpiDef[];
+  pivot: PivotConfig;
 }
 
 export const DEFAULT_CLEANING: CleaningOptions = {

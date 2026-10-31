@@ -4,6 +4,7 @@
 
 import type {
   Dataset,
+  DatasetProfile,
   ElbowPoint,
   KMeansClusterStat,
   KMeansPoint,
@@ -13,6 +14,33 @@ import type {
   RegressionResult,
 } from "./types";
 import { mean, round, std, toNumber } from "./stats";
+
+// Clustering et régression « par défaut » pour les exports : k-means (k = 3)
+// sur les colonnes numériques et régression de la 1re numérique sur les autres.
+// Renvoie null pour chacun si les données ne s'y prêtent pas (jamais d'erreur).
+export function autoClusterAndRegression(
+  dataset: Dataset,
+  profile: DatasetProfile,
+): { kmeans: KMeansResult | null; regression: RegressionResult | null } {
+  const numeric = profile.columns.filter((c) => c.type === "number").map((c) => c.name);
+  let kmeans: KMeansResult | null = null;
+  let regression: RegressionResult | null = null;
+  if (numeric.length >= 1) {
+    try {
+      kmeans = runKMeans(dataset, numeric.slice(0, 6), 3);
+    } catch {
+      kmeans = null;
+    }
+  }
+  if (numeric.length >= 2) {
+    try {
+      regression = runLinearRegression(dataset, numeric[0], numeric.slice(1, 6));
+    } catch {
+      regression = null;
+    }
+  }
+  return { kmeans, regression };
+}
 
 // Au-delà de ce nombre de lignes complètes, le clustering est calculé sur un
 // échantillon aléatoire pour rester réactif dans le navigateur.

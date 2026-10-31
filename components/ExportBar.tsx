@@ -2,13 +2,24 @@
 
 import { useState } from "react";
 import { FileText, FileSpreadsheet, FileType2 } from "lucide-react";
-import type { Analysis, ChartImage, Dataset, ManualLogEntry } from "@/lib/types";
+import type { Data, Layout } from "plotly.js";
+import type {
+  Analysis,
+  ChartImage,
+  Dataset,
+  KMeansResult,
+  ManualLogEntry,
+  RegressionResult,
+} from "@/lib/types";
 import type { ChartConfig } from "@/lib/charts/types";
 import { LIGHT_THEME } from "@/lib/charts/types";
 import { autoTitle, chartDef } from "@/lib/charts/catalog";
 import { buildFigure } from "@/lib/charts/build";
 import { columnInfos } from "@/lib/charts/data";
+import { autoClusterAndRegression } from "@/lib/ml";
 import type { ExcelChartInput } from "@/lib/export-xlsx";
+import type { KpiDef } from "@/lib/kpi/kpi";
+import type { PivotConfig } from "@/lib/pivot/types";
 
 export interface ExportSheetInput {
   name: string;
@@ -16,6 +27,8 @@ export interface ExportSheetInput {
   analysis: Analysis;
   charts: ChartConfig[]; // graphiques personnalisés de la feuille
   manualLog: ManualLogEntry[]; // décisions manuelles de nettoyage
+  kpis: KpiDef[]; // indicateurs clés (tels que configurés à l'écran)
+  pivot: PivotConfig; // tableau croisé dynamique (tel que configuré à l'écran)
 }
 
 interface Props {
@@ -34,6 +47,67 @@ function dataUrlBytes(dataUrl: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+const ML_COLORS = ["#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d"];
+
+// Figure Plotly du clustering : nuage de points sur les deux premières
+// variables, une couleur par groupe.
+function clusterFigure(km: KMeansResult): { data: Data[]; layout: Partial<Layout> } {
+  const [cx, cy] = km.columns;
+  const byCluster = new Map<number, { x: number[]; y: number[] }>();
+  for (const p of km.points) {
+    const g = byCluster.get(p.cluster) ?? byCluster.set(p.cluster, { x: [], y: [] }).get(p.cluster)!;
+    g.x.push(p.values[cx]);
+    g.y.push(p.values[cy]);
+  }
+  const data = [...byCluster.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(
+      ([c, g]) =>
+        ({
+          type: "scatter",
+          mode: "markers",
+          name: `Groupe ${c + 1}`,
+          x: g.x,
+          y: g.y,
+          marker: { color: ML_COLORS[c % ML_COLORS.length], size: 7 },
+        }) as Data,
+    );
+  const layout: Partial<Layout> = {
+    title: { text: `Clustering k-means — ${cx} × ${cy}` },
+    height: 440,
+    margin: { t: 50, r: 20, b: 50, l: 60 },
+    xaxis: { title: { text: cx } },
+    yaxis: { title: { text: cy } },
+    legend: { orientation: "h" },
+    paper_bgcolor: "#ffffff",
+    plot_bgcolor: "#ffffff",
+  };
+  return { data, layout };
+}
+
+// Figure Plotly de la régression : observé vs prédit, avec la droite y = x.
+function regressionFigure(reg: RegressionResult): { data: Data[]; layout: Partial<Layout> } {
+  const xs = reg.points.map((p) => p.actual);
+  const ys = reg.points.map((p) => p.predicted);
+  const min = Math.min(...xs, ...ys);
+  const max = Math.max(...xs, ...ys);
+  const data: Data[] = [
+    { type: "scatter", mode: "markers", name: "Observations", x: xs, y: ys, marker: { color: "#2563eb", size: 7 } } as Data,
+    { type: "scatter", mode: "lines", name: "y = x", x: [min, max], y: [min, max], line: { color: "#dc2626", dash: "dash" } } as Data,
+  ];
+  const layout: Partial<Layout> = {
+    title: { text: `Régression — observé vs prédit (${reg.target})` },
+    height: 440,
+    margin: { t: 50, r: 20, b: 50, l: 60 },
+    xaxis: { title: { text: "Observé" } },
+    yaxis: { title: { text: "Prédit" } },
+    legend: { orientation: "h" },
+    paper_bgcolor: "#ffffff",
+    plot_bgcolor: "#ffffff",
+  };
+  return { data, layout };
 }
 
 export default function ExportBar({ fileName, sheets }: Props) {
@@ -103,19 +177,60 @@ export default function ExportBar({ fileName, sheets }: Props) {
     setError(null);
     setBusy(kind);
     try {
+      // Clustering (k-means) et régression calculés pour l'export, par feuille.
+      setProgress("Calcul du clustering et de la régression…");
+      const ml = sheets.map((s) => autoClusterAndRegression(s.dataset, s.analysis.profile));
+
+      // Graphiques ML (nuage des groupes, observé/prédit) en images PNG.
+      setProgress("Préparation des graphiques d'analyse…");
+      const { figureToPng } = await import("@/components/charts/PlotlyChart");
+      const mlImgs: { cluster?: ChartImage; regression?: ChartImage }[] = [];
+      for (let i = 0; i < sheets.length; i++) {
+        const o: { cluster?: ChartImage; regression?: ChartImage } = {};
+        const km = ml[i].kmeans;
+        if (km && km.columns.length >= 2 && km.points.length > 0) {
+          o.cluster = { title: "Clustering (k-means)", ...(await figureToPng(clusterFigure(km), 900)) };
+        }
+        const reg = ml[i].regression;
+        if (reg && reg.points.length > 0) {
+          o.regression = { title: "Régression linéaire", ...(await figureToPng(regressionFigure(reg), 900)) };
+        }
+        mlImgs.push(o);
+      }
+      setProgress(null);
+
       if (kind === "xlsx") {
         const charts = withCharts && chartCount > 0 ? await excelCharts() : sheets.map(() => []);
         setProgress(null);
         const { exportXLSX } = await import("@/lib/export-xlsx");
         await exportXLSX(
           fileName,
-          sheets.map((s, i) => ({ name: s.name, dataset: s.dataset, analysis: s.analysis, manualLog: s.manualLog, excelCharts: charts[i] })),
+          sheets.map((s, i) => ({
+            name: s.name,
+            dataset: s.dataset,
+            analysis: s.analysis,
+            manualLog: s.manualLog,
+            excelCharts: charts[i],
+            kpis: s.kpis,
+            pivot: s.pivot,
+            kmeans: ml[i].kmeans,
+            regression: ml[i].regression,
+            clusterImage: mlImgs[i].cluster,
+            regressionImage: mlImgs[i].regression,
+          })),
         );
         return;
       }
       const images = withCharts && chartCount > 0 ? await renderCharts() : sheets.map(() => []);
       setProgress(null);
-      const withImages = sheets.map((s, i) => ({ ...s, charts: images[i] }));
+      const withImages = sheets.map((s, i) => ({
+        ...s,
+        charts: images[i],
+        kmeans: ml[i].kmeans,
+        regression: ml[i].regression,
+        clusterImage: mlImgs[i].cluster,
+        regressionImage: mlImgs[i].regression,
+      }));
       if (kind === "pdf") {
         const { exportPDF } = await import("@/lib/export-pdf");
         await exportPDF(fileName, withImages);
@@ -168,8 +283,12 @@ export default function ExportBar({ fileName, sheets }: Props) {
       )}
       <p className="hint" style={{ marginTop: 10 }}>
         {multi
-          ? `L'Excel regroupe un onglet de données par feuille (${sheets.length}) plus un sommaire, un profil, des corrélations et des observations combinés, chaque liste étant un vrai tableau Excel (filtres, tri, style). Le PDF et le Word produisent un rapport complet avec une section par feuille.`
-          : "L'Excel contient les données nettoyées + le profil + les corrélations + les observations, chaque liste étant un vrai tableau Excel (filtres, tri, style). Le PDF et le Word produisent un rapport complet."}
+          ? `Un seul document par format rassemble tout : un onglet de données par feuille (${sheets.length}), un sommaire, le profil, les corrélations et les observations combinés, chaque liste étant un vrai tableau Excel (filtres, tri, style). Le PDF et le Word produisent le même rapport, une section par feuille.`
+          : "Un seul document par format rassemble tout : données nettoyées, profil, corrélations et observations, chaque liste étant un vrai tableau Excel (filtres, tri, style). Le PDF et le Word produisent le même rapport."}
+        {" "}
+        Chaque document inclut aussi les indicateurs (KPI), les statistiques
+        descriptives, les fréquences, le tableau croisé dynamique, le clustering
+        (k-means) et la régression linéaire.
         {chartCount > 0 &&
           " Les graphiques personnalisés y sont repris : dans l'Excel, un onglet « Graphiques » contient le tableau de données de chacun et le graphique Excel natif correspondant, modifiable (image pour les types sans équivalent dans Excel : carte, Sankey, boîte à moustaches…) ; dans le PDF et le Word, des images haute définition."}
       </p>

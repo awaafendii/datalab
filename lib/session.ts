@@ -9,6 +9,8 @@
 // modification).
 
 import type { ChartConfig } from "./charts/types";
+import type { KpiDef } from "./kpi/kpi";
+import type { PivotConfig } from "./pivot/types";
 import type { CleaningOptions, ContextResult, ManualReview, WorkbookInput } from "./types";
 
 export interface SavedSheet {
@@ -18,6 +20,8 @@ export interface SavedSheet {
   aiContext: ContextResult | null;
   charts: ChartConfig[];
   review?: ManualReview; // décisions manuelles (absentes des sessions antérieures)
+  kpis?: KpiDef[]; // indicateurs clés personnalisés (absents des sessions antérieures)
+  pivot?: PivotConfig; // tableau croisé dynamique personnalisé
 }
 
 export interface SavedState {

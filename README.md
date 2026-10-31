@@ -248,6 +248,77 @@ chiffres. Les contrôles sont des règles : ils ne comprennent pas le sens du
 texte (une incohérence de raisonnement ne sera pas vue) et peuvent produire
 des faux positifs, que le relecteur écarte d'un clic.
 
+## Analyse avancée : KPI, TCD, statistiques & export unifié
+
+Dans l'espace **Données**, une fois une feuille nettoyée, quatre capacités en
+font un véritable poste de travail de data analyst / statisticien, sans Excel :
+
+- **Indicateurs clés (KPI)** (`lib/kpi/`, `components/KpiPanel.tsx`) : DataLab
+  propose automatiquement des KPI selon le type de chaque colonne (nombre de
+  lignes, sommes et moyennes des numériques, modalités des catégorielles) ; on
+  en ajoute à la main (colonne, agrégation, libellé, suffixe comme « GNF » ou
+  « % »), on en retire, on régénère. Inclus dans l'export unifié.
+- **Tableau croisé dynamique (TCD)** (`lib/pivot/`, `components/PivotPanel.tsx`) :
+  comme dans Excel — plusieurs champs en **lignes** et en **colonnes**
+  (imbriqués, regroupement des dates jour/mois/trimestre/année), plusieurs
+  **mesures** (somme, moyenne, médiane, min, max, écart-type, variance, nombre,
+  nombre distinct), **sous-totaux**, **totaux généraux** et **filtres**. Les
+  sous-totaux et totaux sont recalculés depuis les valeurs brutes (corrects même
+  pour moyenne / médiane / écart-type).
+- **Statistiques paramétrables** (`lib/statlab/`, `components/StatsPanel.tsx`) :
+  statistiques descriptives complètes (N, moyenne, écart-type, quartiles, CV,
+  asymétrie, aplatissement, IC 95 %), matrices de corrélation **Pearson** ou
+  **Spearman**, statistiques par groupe, tableaux de fréquences, et **tests
+  d'hypothèse** avec de vraies p-values — **t de Welch**, **ANOVA** à un facteur,
+  **khi²** d'indépendance (fonctions bêta / gamma incomplètes implémentées et
+  testées contre des valeurs de référence), et **régression linéaire (OLS)**
+  simple ou multiple (équation, R² / R² ajusté / RMSE / MAE, coefficients bruts
+  et standardisés), réutilisant `lib/ml.ts`.
+- **Export unifié en un seul document par format** (Excel, PDF, Word) : un
+  **unique** document rassemble **tout** — données traitées, profil,
+  observations, corrélations, décisions de nettoyage, graphiques, **plus** les
+  Indicateurs (KPI), les Statistiques descriptives, les Fréquences, le Tableau
+  croisé, le **Clustering (k-means)** et la **Régression linéaire**. En Excel,
+  chaque bloc est un **vrai tableau** (en-tête figé, filtres, formats de nombres
+  et de dates) dans son propre onglet ; en PDF et Word, autant de sections. Les
+  KPI et le tableau croisé repris sont **exactement ceux configurés à l'écran**
+  (propres à chaque feuille, mémorisés dans la session) ; le clustering et la
+  régression sont calculés à l'export (k = 3 sur les colonnes numériques ;
+  régression de la 1re numérique sur les autres). Le contenu commun aux trois
+  formats est centralisé dans `lib/export-sections.ts`.
+
+## Module « Suivi d'exécution budgétaire »
+
+Accessible par l'onglet **Exécution** (`/execution`). On y charge un état
+d'exécution (CSV ou Excel) décrivant, par ligne (programme, action, titre ou
+imputation), au moins une **dotation** (crédits ouverts / votés) et une colonne
+d'**engagements** ou de **paiements** (ordonnancements, décaissements, dépenses
+réelles). Tout est calculé dans le navigateur, sans IA ni serveur.
+
+- **Reconnaissance des colonnes** : le rôle de chaque colonne (libellé, code,
+  dotation, engagements, paiements) est deviné d'après son en-tête et la
+  proportion de valeurs numériques (`lib/execution/columns.ts`), puis ajustable
+  à la main. « Crédits de paiement » (CP) est bien rattaché aux paiements, pas à
+  la dotation.
+- **Indicateurs** (par ligne et au total) : taux d'engagement
+  (engagements / dotation), taux d'exécution (paiements / dotation), taux de
+  décaissement (paiements / engagements) et **disponible** (dotation −
+  engagements). Les montants « à la française » saisis en texte (`1 200 000`,
+  `600 000 GNF`) sont lus via le même analyseur que le module Documents.
+- **Alertes**, graduées et triées par gravité : **dépassement** de la dotation
+  (bloquant), **paiements supérieurs aux engagements**, crédits dotés mais
+  **non exécutés**, **sous-consommation** sous un seuil réglable (50 % par
+  défaut), montants négatifs. Les lignes de **total / sous-total** (« Total »,
+  « Ensemble »…) sont détectées et exclues des agrégats pour ne pas compter
+  deux fois.
+- **Rapprochement avec la loi de finances** (facultatif) : le total des
+  dotations est comparé aux **crédits votés** de la section budgétaire choisie
+  (référentiel `lib/documents/lf-data.ts`), avec un écart toléré de 1 %.
+
+Le cœur de calcul (`lib/execution/`) est **pur et testé** (voir *Tests*) ;
+l'interface (`components/execution/ExecutionView.tsx`, `app/execution/page.tsx`)
+réutilise le chargeur de fichiers et le référentiel existants.
+
 ## Stack technique
 
 - [Next.js 14](https://nextjs.org/) (App Router) + React 18 + TypeScript
@@ -285,6 +356,18 @@ des faux positifs, que le relecteur écarte d'un clic.
   (`app/api/context`) proxy l'API Claude pour l'analyse IA — elle n'est
   appelée que si l'utilisateur active ce mode ; tout le reste s'exécute dans
   le navigateur.
+
+## Tests
+
+Le cœur logique (fonctions pures, sans DOM) est couvert par des tests unitaires
+[Vitest](https://vitest.dev/) : parsing des nombres « à la française », outils
+texte, référentiel loi de finances, utilitaires de contrôle et module de suivi
+d'exécution budgétaire (`tests/`).
+
+```bash
+npm test        # lance toute la suite une fois
+npm run test:watch  # mode interactif
+```
 
 ## Démarrer en local
 
@@ -343,7 +426,11 @@ configuration particulière n'est nécessaire.
      base. Pour activer l'analyse IA optionnelle, ajoute une variable
      d'environnement **`ANTHROPIC_API_KEY`** (Project Settings → Environment
      Variables) avec ta clé API Anthropic — jamais exposée au navigateur,
-     utilisée uniquement par la route serveur `app/api/context`.
+     utilisée uniquement par la route serveur `app/api/context`. Cette route
+     est protégée : appels **de même origine** uniquement (ou `ALLOWED_ORIGIN`),
+     **limitation de débit** par IP, plafond de taille du corps et troncature
+     des cellules, afin d'éviter qu'un tiers n'épuise les crédits API si l'URL
+     est découverte.
 4. Clique **Deploy**. En ~1 minute, l'app est en ligne sur une URL
    `https://<projet>.vercel.app`.
 

@@ -1778,3 +1778,202 @@ table.data.review-table {
   align-items: center;
   margin-top: 10px;
 }
+
+/* Suivi d'exécution budgétaire : cartes KPI de synthèse */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-top: 6px;
+}
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.kpi .k-label {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.kpi .k-value {
+  font-size: 19px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.kpi .k-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Tableau croisé dynamique (TCD) */
+.pivot-zones {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.pivot-zone {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.pivot-zone h4 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.pivot-zone .chip {
+  width: 100%;
+  justify-content: space-between;
+}
+.pivot-zone .chip-label {
+  overflow-wrap: anywhere;
+}
+.pivot-value {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  align-items: center;
+}
+.pivot-value select {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.pivot-add {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.pivot-filter {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.pivot-filter > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.pivot-filter > summary .icon-btn {
+  margin-left: auto;
+}
+.pivot-filter-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow: auto;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.pivot-filter-keys label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.check.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.pivot-table th.pivot-corner,
+.pivot-table th.pivot-rowhead {
+  text-align: left;
+}
+.pivot-table th.pivot-rowhead {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pivot-table .pivot-total-col {
+  border-left: 2px solid var(--border);
+}
+.pivot-table tr.pv-subtotal {
+  background: var(--primary-soft);
+  font-weight: 600;
+}
+.pivot-table tr.pv-total {
+  background: var(--primary-soft);
+  font-weight: 700;
+}
+.pivot-table tr.pv-total th.pivot-rowhead {
+  font-weight: 700;
+}
+
+/* KPI éditables */
+.kpi-editable {
+  position: relative;
+}
+.kpi-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0.45;
+}
+.kpi-editable:hover .kpi-remove {
+  opacity: 1;
+}
+.kpi-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  align-items: center;
+}
+.kpi-add select,
+.kpi-add input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13.5px;
+}
+.kpi-add input {
+  flex: 1;
+  min-width: 140px;
+}
+
+/* Module statistique */
+.stat-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.stat-result p {
+  margin: 6px 0;
+}
+.stat-sig {
+  color: var(--primary);
+  font-weight: 600;
+}
+.stat-nsig {
+  color: var(--muted);
+}

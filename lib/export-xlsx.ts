@@ -1,8 +1,18 @@
-import type { Analysis, Dataset, ManualLogEntry } from "./types";
+import type { Analysis, ChartImage, Dataset, KMeansResult, ManualLogEntry, RegressionResult } from "./types";
 import type { ChartTable, ExcelCell, ExcelChartExport } from "./charts/excel-types";
 import { parseDate } from "./charts/data";
 import { loadSaveAs } from "./save-file";
 import { addDrawings, colLetter, type DrawingItem } from "./xlsx-drawings";
+import type { KpiDef } from "./kpi/kpi";
+import type { PivotConfig } from "./pivot/types";
+import {
+  clusteringSection,
+  frequencyTables,
+  kpiTable,
+  pivotTable,
+  regressionSection,
+  statsTable,
+} from "./export-sections";
 
 // Graphique personnalisé prêt pour Excel : tableau de données, graphique
 // natif (modifiable) ou, à défaut, image PNG.
@@ -23,6 +33,12 @@ export interface ExportSheet {
   analysis: Analysis;
   manualLog?: ManualLogEntry[]; // décisions manuelles de nettoyage
   excelCharts?: ExcelChartInput[]; // graphiques personnalisés
+  kpis?: KpiDef[]; // indicateurs clés (tels que configurés à l'écran)
+  pivot?: PivotConfig; // tableau croisé dynamique (tel que configuré à l'écran)
+  kmeans?: KMeansResult | null; // clustering k-means
+  regression?: RegressionResult | null; // régression linéaire
+  clusterImage?: ChartImage; // nuage de points du clustering
+  regressionImage?: ChartImage; // observé vs prédit
 }
 
 type ExcelJSModule = typeof import("exceljs");
@@ -296,6 +312,17 @@ export async function buildXLSX(
   const multi = sheets.length > 1;
   const drawings = new Map<string, DrawingItem[]>();
 
+  // Insère une image PNG (graphique ML) dans une feuille, en haut à droite du
+  // tableau. Utilise l'API d'images d'ExcelJS (indépendante des graphiques
+  // natifs DrawingML des graphiques personnalisés).
+  const embedImage = (ws: Worksheet, img: ChartImage, col: number, row: number) => {
+    const base64 = img.dataUrl.slice(img.dataUrl.indexOf(",") + 1);
+    const id = wb.addImage({ base64, extension: "png" });
+    const width = Math.min(560, img.width);
+    const height = Math.round((width * img.height) / img.width);
+    ws.addImage(id, { tl: { col, row } as never, ext: { width, height } });
+  };
+
   if (multi) {
     const ws = wb.addWorksheet(safeSheetName("Sommaire", usedSheets), { views: [{ state: "frozen", ySplit: 1 }] });
     const columns = ["Feuille", "Lignes", "Colonnes", "Doublons retirés", "Valeurs manquantes", "Graphiques"];
@@ -319,6 +346,67 @@ export async function buildXLSX(
     const rows = dataRows(s);
     const { columns } = addTable(ws, usedTables, { name: `Donnees_${s.name}`, row: 1, columns: s.dataset.columns, rows });
     fitColumns(ws, columns, rows);
+  }
+
+  // Indicateurs, statistiques, fréquences, tableau croisé, clustering et
+  // régression — par feuille source (préfixés par le nom de la feuille si
+  // classeur multi-feuilles). Chaque bloc est un vrai tableau Excel.
+  for (const s of sheets) {
+    const pre = (base: string) => (multi ? `${base} ${s.name}` : base);
+    const put = (title: string, name: string, columns: string[], rows: ExcelCell[][]) => {
+      const ws = wb.addWorksheet(safeSheetName(title, usedSheets), { views: [{ state: "frozen", ySplit: 1 }] });
+      addTable(ws, usedTables, { name, row: 1, columns, rows });
+      fitColumns(ws, columns, rows);
+    };
+
+    const kpi = s.kpis ? kpiTable(s.dataset, s.kpis) : null;
+    if (kpi) put(pre("Indicateurs"), `KPI_${s.name}`, kpi.columns, kpi.rows);
+
+    const stats = statsTable(s.dataset, s.analysis.profile);
+    if (stats) put(pre("Statistiques"), `Stats_${s.name}`, stats.columns, stats.rows);
+
+    const freqs = frequencyTables(s.dataset, s.analysis.profile, 50, 0);
+    if (freqs.length > 0) {
+      // Toutes les colonnes catégorielles sur une feuille, empilées.
+      const ws = wb.addWorksheet(safeSheetName(pre("Fréquences"), usedSheets));
+      let row = 1;
+      for (const f of freqs) {
+        const title = ws.getCell(row, 1);
+        title.value = f.title;
+        title.font = { bold: true, size: 12 };
+        row += 1;
+        addTable(ws, usedTables, { name: `Freq_${s.name}_${row}`, row, columns: f.columns, rows: f.rows });
+        row += f.rows.length + 3;
+      }
+      fitColumns(ws, freqs[0].columns, freqs.flatMap((f) => f.rows));
+    }
+
+    const piv = s.pivot ? pivotTable(s.dataset, s.pivot) : null;
+    if (piv) put(pre("Tableau croisé"), `TCD_${s.name}`, piv.columns, piv.rows);
+
+    const clu = clusteringSection(s.kmeans ?? null);
+    if (clu) {
+      const ws = wb.addWorksheet(safeSheetName(pre("Clustering"), usedSheets), { views: [{ state: "frozen", ySplit: 1 }] });
+      ws.getCell(1, 1).value = clu.note;
+      ws.getCell(1, 1).font = { italic: true, color: { argb: "FF666666" } };
+      addTable(ws, usedTables, { name: `Cluster_${s.name}`, row: 3, columns: clu.summary.columns, rows: clu.summary.rows });
+      fitColumns(ws, clu.summary.columns, clu.summary.rows);
+      if (s.clusterImage) embedImage(ws, s.clusterImage, clu.summary.columns.length + 1, 2);
+    }
+
+    const reg = regressionSection(s.regression ?? null);
+    if (reg) {
+      const ws = wb.addWorksheet(safeSheetName(pre("Régression"), usedSheets));
+      let row = 1;
+      for (const line of reg.lines) {
+        ws.getCell(row, 1).value = line;
+        row += 1;
+      }
+      row += 1;
+      addTable(ws, usedTables, { name: `Reg_${s.name}`, row, columns: reg.coefficients.columns, rows: reg.coefficients.rows });
+      ws.getColumn(1).width = 60;
+      if (s.regressionImage) embedImage(ws, s.regressionImage, reg.coefficients.columns.length + 1, 1);
+    }
   }
 
   // Profil des colonnes (toutes feuilles regroupées si classeur multi-feuilles).
