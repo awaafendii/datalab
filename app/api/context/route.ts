@@ -16,7 +16,7 @@
 //       • En ligne (défaut) : https://generativelanguage.googleapis.com/v1beta/openai (Google Gemini).
 //       • Local / hors-ligne : http://localhost:1234/v1 (LM Studio, sans clé).
 //   - AI_MODELS   : identifiants de modèles séparés par des virgules, essayés
-//       dans l'ordre jusqu'à une réponse valide (défaut "gemini-2.5-flash" ;
+//       dans l'ordre jusqu'à une réponse valide (défaut "gemini-3.8-flash,gemini-2.5-flash" ;
 //       id SANS préfixe sur l'API Google directe, contrairement à OpenRouter/ngrok).
 //   - AI_API_KEY  : clé du service en ligne (obligatoire si host ≠ localhost).
 //   - AI_TIMEOUT_MS : délai max par modèle avant bascule (défaut 25000).
@@ -33,7 +33,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const AI_BASE_URL = (process.env.AI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/+$/, "");
-const AI_MODELS = (process.env.AI_MODELS || "gemini-2.5-flash")
+const AI_MODELS = (process.env.AI_MODELS || "gemini-3.8-flash,gemini-2.5-flash")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
