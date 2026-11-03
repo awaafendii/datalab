@@ -5,6 +5,11 @@ const require = createRequire(import.meta.url);
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Sortie « standalone » : Next produit un serveur Node minimal et autonome
+  // (.next/standalone/server.js + node_modules réduits) que l'application de
+  // bureau Electron embarque et lance en interne. Sans incidence sur le
+  // déploiement web habituel (Vercel ignore ce dossier).
+  output: "standalone",
   webpack(config) {
     // Les modules WebGL de Plotly (regl-scatter2d…) appellent glslify avec
     // des shaders déjà compilés : la version navigateur, qui se contente

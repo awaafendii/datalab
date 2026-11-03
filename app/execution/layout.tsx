@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { isModuleEnabled } from "@/lib/modules";
 
 export const metadata: Metadata = {
   title: "DataLab — Suivi d'exécution budgétaire",
@@ -7,5 +9,8 @@ export const metadata: Metadata = {
 };
 
 export default function ExecutionLayout({ children }: { children: React.ReactNode }) {
+  // Module désactivé dans lib/modules.ts : page rendue inaccessible (le code
+  // reste en place). Réactiver en repassant `execution` à true.
+  if (!isModuleEnabled("execution")) redirect("/");
   return children;
 }

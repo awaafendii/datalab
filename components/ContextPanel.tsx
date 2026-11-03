@@ -41,7 +41,7 @@ export default function ContextPanel({ dataset, heuristic, aiResult, onAiResult 
       </h2>
       <p className="subtitle">
         {effective.source === "ai"
-          ? "Analyse IA (Claude) : un échantillon de vos données a été envoyé pour une compréhension plus fine."
+          ? "Analyse IA (modèle local) : un échantillon de vos données a été envoyé au serveur IA configuré pour une compréhension plus fine."
           : "Analyse heuristique locale (dictionnaire de mots-clés) : aucune donnée n'a quitté votre navigateur."}
       </p>
 
@@ -123,7 +123,7 @@ export default function ContextPanel({ dataset, heuristic, aiResult, onAiResult 
           {loading ? <span className="spinner" /> : <Sparkles size={16} />}
           {aiResult
             ? "Relancer l'analyse IA"
-            : "Activer l'analyse IA (envoie un échantillon à Claude)"}
+            : "Activer l'analyse IA (modèle local)"}
         </button>
         {aiResult && (
           <button className="btn" onClick={() => onAiResult(null)} disabled={loading}>

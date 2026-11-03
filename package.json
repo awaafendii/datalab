@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Plateforme d'analyse de données : nettoyage, apurement, analyse et export (XLSX/PDF/Word), 100% côté navigateur.",
+  "main": "electron/main.js",
   "scripts": {
     "predev": "node scripts/copy-pdf-worker.mjs",
     "dev": "next dev",
@@ -11,7 +12,10 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:desktop": "next build && node scripts/build-desktop.mjs",
+    "electron:dev": "electron .",
+    "dist": "npm run build:desktop && electron-builder --win"
   },
   "dependencies": {
     "docx": "8.5.0",
@@ -39,7 +43,50 @@
     "@types/papaparse": "5.3.14",
     "@types/react": "18.3.11",
     "@types/react-dom": "18.3.0",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
     "typescript": "5.6.3",
     "vitest": "^2.1.9"
+  },
+  "build": {
+    "appId": "gn.gov.budget.datalab",
+    "productName": "DataLab",
+    "copyright": "Ministère du Budget",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "build/icon.ico"
+    ],
+    "extraResources": [
+      {
+        "from": ".next/standalone",
+        "to": "app",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DataLab"
+    }
   }
 }

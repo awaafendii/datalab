@@ -1,30 +1,49 @@
 // Route serveur optionnelle : appelée uniquement quand l'utilisateur clique
 // sur "Activer l'analyse IA" dans l'interface. C'est le seul endroit de
-// l'application où des données quittent le navigateur — un échantillon de
-// lignes est envoyé à l'API Claude pour une compréhension plus fine du
-// secteur d'activité, des en-têtes et des colonnes clés que ce que permet
-// le dictionnaire heuristique local (lib/sectors.ts).
+// l'application où un échantillon de données quitte le navigateur — il est
+// envoyé au serveur IA **compatible OpenAI** configuré pour une compréhension
+// plus fine du secteur d'activité, des en-têtes et des colonnes clés que le
+// dictionnaire heuristique local (lib/sectors.ts).
 //
-// Nécessite la variable d'environnement ANTHROPIC_API_KEY (côté serveur
-// uniquement — jamais exposée au navigateur). Sans elle, cette route renvoie
-// une erreur claire et l'application continue de fonctionner en mode
-// heuristique local.
+// Par défaut : passerelle IA en ligne **ngrok** (gateway.ngrok.ai), compatible
+// OpenAI, qui route vers Google Gemini. Il suffit de fournir AI_API_KEY (clé
+// ngrok). Alternative 100 % locale / hors-ligne : pointer AI_BASE_URL sur
+// LM Studio (http://localhost:1234/v1), qui ne requiert pas de clé.
 //
-// Garde-fous (cette route proxy une API payante) :
-//   - même origine uniquement (ou ALLOWED_ORIGIN) : empêche un site tiers
-//     d'appeler la route depuis le navigateur d'un visiteur ;
-//   - plafond de taille du corps : évite les requêtes volumineuses ;
-//   - limitation de débit par IP (fenêtre glissante en mémoire) : réduit le
-//     risque d'épuisement des crédits Anthropic si l'URL est découverte ;
-//   - troncature des cellules : borne le coût et la surface d'injection.
-// La limitation en mémoire est « au mieux » sur un hébergement sans état
-// (plusieurs instances) ; pour une protection stricte, placer un WAF / un
-// rate-limit de plateforme (ex. Vercel) devant cette route.
+// Configuration (variables d'environnement, côté serveur uniquement — la clé
+// n'est JAMAIS exposée au navigateur ni incluse dans l'installeur) :
+//   - AI_BASE_URL : URL du serveur compatible OpenAI.
+//       • En ligne (défaut) : https://gateway.ngrok.ai/v1 (passerelle ngrok → Google).
+//       • Local / hors-ligne : http://localhost:1234/v1 (LM Studio, sans clé).
+//   - AI_MODELS   : identifiants de modèles séparés par des virgules, essayés
+//       dans l'ordre jusqu'à une réponse valide (défaut "google/gemini-2.5-flash" ;
+//       format "fournisseur/modèle" attendu par la passerelle).
+//   - AI_API_KEY  : clé du service en ligne (obligatoire si host ≠ localhost).
+//   - AI_TIMEOUT_MS : délai max par modèle avant bascule (défaut 25000).
+//   - ALLOWED_ORIGIN : origine supplémentaire autorisée (déploiement en ligne).
+//
+// Sans serveur IA joignable ou sans clé, cette route renvoie une erreur claire
+// et l'application continue de fonctionner en mode heuristique local.
+//
+// Garde-fous : même origine uniquement (ou ALLOWED_ORIGIN), plafond de taille
+// du corps, limitation de débit par IP (fenêtre glissante en mémoire),
+// troncature des cellules.
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-const ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
+const AI_BASE_URL = (process.env.AI_BASE_URL || "https://gateway.ngrok.ai/v1").replace(/\/+$/, "");
+const AI_MODELS = (process.env.AI_MODELS || "google/gemini-2.5-flash")
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
+const AI_API_KEY = process.env.AI_API_KEY || "";
+const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 25000);
+
+// Un service en ligne (host ≠ localhost) exige une clé ; LM Studio en local
+// n'en demande pas.
+const AI_IS_LOCAL = /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(AI_BASE_URL);
+
 const MAX_SAMPLE_ROWS = 8;
 const MAX_COLUMNS = 60;
 const MAX_CELL_CHARS = 200;
@@ -136,18 +155,47 @@ function extractJson(text: string): Record<string, unknown> | null {
   }
 }
 
-export async function POST(req: Request) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return Response.json(
-      {
-        error:
-          "L'analyse IA n'est pas configurée sur ce déploiement (variable ANTHROPIC_API_KEY absente côté serveur).",
-      },
-      { status: 500 },
-    );
+// Appelle un modèle du serveur compatible OpenAI. Renvoie le texte de réponse,
+// ou lève une erreur (réseau, délai dépassé, statut non OK).
+async function callModel(model: string, prompt: string): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  try {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (AI_API_KEY) headers.authorization = `Bearer ${AI_API_KEY}`;
+    const resp = await fetch(`${AI_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Tu réponds UNIQUEMENT avec un objet JSON strict et valide, sans aucun texte autour, sans balises Markdown.",
+          },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.2,
+        max_tokens: 800,
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      const detail = await resp.text().catch(() => "");
+      throw new Error(`statut ${resp.status} ${detail.slice(0, 200)}`);
+    }
+    const data = (await resp.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    return data.choices?.[0]?.message?.content ?? "";
+  } finally {
+    clearTimeout(timer);
   }
+}
 
+export async function POST(req: Request) {
   if (!sameOrigin(req)) {
     return Response.json({ error: "Origine non autorisée." }, { status: 403 });
   }
@@ -187,45 +235,51 @@ export async function POST(req: Request) {
     return Response.json({ error: "Aucune colonne fournie." }, { status: 400 });
   }
 
-  let apiResp: Response;
-  try {
-    apiResp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
+  if (AI_MODELS.length === 0) {
+    return Response.json(
+      { error: "Aucun modèle IA configuré (variable AI_MODELS vide)." },
+      { status: 500 },
+    );
+  }
+
+  if (!AI_IS_LOCAL && !AI_API_KEY) {
+    return Response.json(
+      {
+        error:
+          "Analyse IA non configurée : clé API manquante (variable AI_API_KEY) pour le service IA en ligne.",
       },
-      body: JSON.stringify({
-        model: ANTHROPIC_MODEL,
-        max_tokens: 800,
-        messages: [{ role: "user", content: buildPrompt(body) }],
-      }),
-    });
-  } catch {
-    return Response.json({ error: "Impossible de contacter l'API Claude." }, { status: 502 });
-  }
-
-  if (!apiResp.ok) {
-    const detail = await apiResp.text().catch(() => "");
-    return Response.json(
-      { error: `Erreur API Claude (${apiResp.status}) : ${detail.slice(0, 300)}` },
-      { status: 502 },
+      { status: 500 },
     );
   }
 
-  const data = (await apiResp.json()) as {
-    content?: { type: string; text?: string }[];
-  };
-  const text = data.content?.find((b) => b.type === "text")?.text ?? "";
-  const parsed = extractJson(text);
+  const prompt = buildPrompt(body);
+  const errors: string[] = [];
 
-  if (!parsed) {
-    return Response.json(
-      { error: "Réponse de l'IA illisible, réessayez." },
-      { status: 502 },
-    );
+  // Essaie chaque modèle dans l'ordre : le premier qui renvoie un JSON
+  // exploitable gagne, pour répondre au plus vite.
+  for (const model of AI_MODELS) {
+    let text: string;
+    try {
+      text = await callModel(model, prompt);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const friendly = msg.includes("abort") ? "délai dépassé" : msg;
+      errors.push(`${model}: ${friendly}`);
+      continue;
+    }
+    const parsed = extractJson(text);
+    if (parsed) return Response.json(parsed);
+    errors.push(`${model}: réponse illisible`);
   }
 
-  return Response.json(parsed);
+  // Tous les modèles ont échoué : message clair, l'app repasse en heuristique.
+  return Response.json(
+    {
+      error:
+        `Serveur IA injoignable ou sans réponse exploitable (${AI_BASE_URL}). ` +
+        `Vérifiez que LM Studio (ou le serveur configuré) est démarré et qu'un modèle est chargé. ` +
+        `Détails : ${errors.join(" ; ").slice(0, 300)}`,
+    },
+    { status: 502 },
+  );
 }
