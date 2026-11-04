@@ -75,24 +75,26 @@ interface SheetContext {
 
 function buildSystem(): string {
   return [
-    "Tu es un assistant IA spécialisé en ANALYSE DE DONNÉES (chatbot type ChatGPT dédié à la data).",
-    "Tu réponds en français à TOUTE question sur les données chargées. Tu n'es PAS limité à des questions prédéfinies.",
+    "Tu es un assistant IA spécialisé en ANALYSE DE DONNÉES (chatbot type ChatGPT). Tu réponds en français",
+    "à TOUTE question sur les données. Tu n'es PAS limité à des questions prédéfinies.",
     "",
-    "On te fournit, pour chaque FEUILLE : le schéma, des STATISTIQUES AGRÉGÉES GLOBALES (somme, moyenne,",
-    "min, max, comptes, top catégories) et un petit échantillon. Ces stats globales NE couvrent PAS les",
-    "CROISEMENTS précis (ex. moyenne PAR catégorie, filtres combinés, Top N par groupe).",
+    "Tu disposes, par FEUILLE : le schéma, des STATISTIQUES GLOBALES (somme, moyenne, min, max, comptes,",
+    "top catégories) et un échantillon. Ces stats GLOBALES ne contiennent PAS les valeurs par groupe ni les",
+    "croisements (moyenne PAR catégorie, filtres combinés, classements…).",
     "",
-    "TOOL-USE : pour obtenir un chiffre EXACT non disponible dans le contexte, tu peux DEMANDER un calcul.",
-    "DataLab l'exécute sur TOUTES les données et te renvoie le résultat exact (« Résultats calculés »),",
-    "puis tu réponds à partir de ces chiffres.",
-    "",
-    "À CHAQUE tour, réponds par UN SEUL objet JSON strict (aucun texte autour) :",
-    '- Pour demander un calcul : {"action":"compute","sheet":"<nom exact de la feuille>","plan":{"title":"...","steps":[...],"explanation":"..."}}',
-    '- Pour la réponse finale (conversationnelle, cite les chiffres) : {"action":"answer","answer":"..."}',
-    "",
-    "Demande un calcul UNIQUEMENT si nécessaire ; sinon réponds directement avec les stats fournies.",
-    "Si des « Résultats calculés » te sont déjà fournis, utilise-les et réponds (action:\"answer\").",
+    "RÈGLES ABSOLUES :",
+    "1) Si une section « RÉSULTATS CALCULÉS » est présente : elle contient EXACTEMENT les chiffres demandés,",
+    "   calculés sur TOUTES les données. Tu DOIS répondre à partir de ces chiffres (action:\"answer\") en les",
+    "   citant. Il est INTERDIT de dire que l'information manque ou de redemander un calcul dans ce cas.",
+    "2) Sinon, si la question exige une valeur PAR groupe/catégorie, un filtre, un classement ou tout",
+    "   croisement absent des stats globales : tu DOIS demander le calcul (action:\"compute\" + plan).",
+    "   Il est INTERDIT de répondre que c'est impossible — DEMANDE le calcul.",
+    "3) Si la question se répond directement avec les stats globales/l'échantillon : réponds (action:\"answer\").",
     "N'invente JAMAIS de chiffres.",
+    "",
+    "Réponds TOUJOURS par UN SEUL objet JSON strict, sans texte autour :",
+    '- Calcul : {"action":"compute","sheet":"<nom exact de la feuille>","plan":{"title":"...","steps":[...],"explanation":"..."}}',
+    '- Réponse : {"action":"answer","answer":"...(cite les chiffres)"}',
     "",
     "Format du plan (colonnes EXISTANTES, noms exacts) — steps = opérations :",
     "filter(column,operator,value) operator= =|!=|>|<|>=|<=|contains|in|not_in ; select(columns[]) ;",
@@ -110,15 +112,15 @@ function buildUser(sheets: SheetContext[], question: string, toolResults: unknow
     repartitions: s.categoricalSummary,
     echantillon: s.sample,
   }));
-  const parts = [`Contexte des feuilles (JSON) :`, JSON.stringify(ctx)];
+  const parts: string[] = [];
   if (Array.isArray(toolResults) && toolResults.length) {
     parts.push(
-      "",
-      "Résultats calculés (EXACTS, calculés sur toutes les données — utilise-les pour répondre) :",
+      "RÉSULTATS CALCULÉS (EXACTS, calculés sur TOUTES les données — tu DOIS répondre à partir de ces chiffres, action:\"answer\") :",
       JSON.stringify(toolResults).slice(0, 60000),
+      "",
     );
   }
-  parts.push("", `Question : ${question}`);
+  parts.push(`Contexte des feuilles — statistiques GLOBALES (JSON) :`, JSON.stringify(ctx), "", `Question : ${question}`);
   return parts.join("\n");
 }
 
