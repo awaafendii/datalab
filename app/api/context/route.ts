@@ -33,7 +33,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const AI_BASE_URL = (process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
-const AI_MODELS = (process.env.AI_MODELS || "llama-3.1-8b-instant,gemma2-9b-it,openai/gpt-oss-120b")
+const AI_MODELS = (process.env.AI_MODELS || "openai/gpt-oss-120b,llama-3.1-8b-instant")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
