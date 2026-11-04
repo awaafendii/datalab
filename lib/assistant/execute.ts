@@ -243,6 +243,39 @@ const AGG_LABEL: Record<AggFn, string> = {
   count_distinct: "Nombre distinct",
 };
 
+const KNOWN_OPS = ["filter", "select", "rename", "derive", "sort", "group_aggregate", "limit"];
+
+// Rattrape les variantes de format produites parfois par le LLM : étape où
+// l'opération est une CLÉ ({"group_aggregate":[...]}) au lieu de {op:"..."}.
+// Les étapes illisibles (chaînes, format inconnu) renvoient null (ignorées).
+function normalizeStep(raw: unknown): PlanStep | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = raw as Record<string, unknown>;
+  if (typeof s.op === "string") return s as unknown as PlanStep;
+  const op = KNOWN_OPS.find((o) => o in s);
+  if (!op) return null;
+  const v = s[op];
+  const obj = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  switch (op) {
+    case "group_aggregate":
+      return { op, group_by: Array.isArray(v) ? v : s.group_by ?? [], measures: s.measures ?? [] } as unknown as PlanStep;
+    case "sort":
+      return { op, by: Array.isArray(v) ? v : s.by ?? [] } as unknown as PlanStep;
+    case "select":
+      return { op, columns: Array.isArray(v) ? v : s.columns ?? [] } as unknown as PlanStep;
+    case "rename":
+      return { op, renames: Array.isArray(v) ? v : s.renames ?? [] } as unknown as PlanStep;
+    case "limit":
+      return { op, n: typeof v === "number" ? v : Number(s.n ?? 0) } as unknown as PlanStep;
+    case "filter":
+      return (obj ? { op, ...obj } : { op, column: s.column, operator: s.operator, value: s.value }) as unknown as PlanStep;
+    case "derive":
+      return (obj ? { op, ...obj } : { op, name: s.name, formula: typeof v === "string" ? v : s.formula }) as unknown as PlanStep;
+    default:
+      return null;
+  }
+}
+
 export function executePlan(
   dataset: { columns: string[]; rows: Row[] },
   plan: TransformPlan,
@@ -250,7 +283,12 @@ export function executePlan(
   let table: Table = { columns: [...dataset.columns], rows: dataset.rows.map((r) => ({ ...r })) };
   const stepNotes: string[] = [];
   const warnings: string[] = [];
-  for (const step of plan.steps ?? []) {
+  for (const raw of (plan.steps ?? []) as unknown[]) {
+    const step = normalizeStep(raw);
+    if (!step) {
+      warnings.push("Étape ignorée (format non reconnu).");
+      continue;
+    }
     const before = table.rows.length;
     table = applyStep(step, table, warnings);
     stepNotes.push(describeStep(step, before, table.rows.length));
