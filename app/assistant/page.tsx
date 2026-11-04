@@ -6,7 +6,8 @@ import { Sparkles, Send, Download, FileSpreadsheet, Table2, FileText } from "luc
 import AppNav from "@/components/AppNav";
 import FileUpload from "@/components/FileUpload";
 import { executePlan } from "@/lib/assistant/execute";
-import { buildSheetsContext, fetchChatReply } from "@/lib/assistant/chat";
+import { buildSheetsContext, fetchChatStep } from "@/lib/assistant/chat";
+import type { ToolResult } from "@/lib/assistant/chat";
 import { fetchSynthesisReport, downloadMarkdown, downloadDocx } from "@/lib/assistant/report";
 import type { SynthesisReport } from "@/lib/assistant/report";
 import type { Dataset, Row, WorkbookInput } from "@/lib/types";
@@ -78,19 +79,37 @@ export default function AssistantPage() {
     setInput("");
     try {
       const sheets = buildSheetsContext(workbook);
-      const reply = await fetchChatReply(sheets, history, request);
-      setMessages((m) => [...m, { role: "assistant", content: reply.answer }]);
-      // L'IA peut accompagner sa réponse d'un tableau : on l'exécute localement
-      // sur la feuille concernée (ou la feuille sélectionnée par défaut).
-      if (reply.plan) {
+      const toolResults: ToolResult[] = [];
+      let answered = false;
+      // Boucle tool-use : l'IA peut demander des calculs exacts (exécutés
+      // localement sur toutes les données) avant de répondre.
+      for (let iter = 0; iter < 3 && !answered; iter++) {
+        const step = await fetchChatStep(sheets, history, request, toolResults);
+        if (step.action === "answer" || !step.plan) {
+          setMessages((m) => [...m, { role: "assistant", content: step.answer || "(réponse vide)" }]);
+          answered = true;
+          break;
+        }
+        // Calcul exact demandé par l'IA.
         const ds =
-          (reply.sheet && workbook.sheets.find((s) => s.name === reply.sheet)?.dataset) ||
+          (step.sheet && workbook.sheets.find((s) => s.name === step.sheet)?.dataset) ||
           workbook.sheets[sheetIdx]?.dataset ||
           workbook.sheets[0]?.dataset;
-        if (ds) {
-          setPlan(reply.plan);
-          setResult(executePlan(ds, reply.plan));
+        if (!ds) {
+          setMessages((m) => [...m, { role: "assistant", content: "Données introuvables pour le calcul." }]);
+          answered = true;
+          break;
         }
+        const r = executePlan(ds, step.plan);
+        setPlan(step.plan);
+        setResult(r);
+        toolResults.push({ title: step.plan.title || "Calcul", columns: r.columns, rows: r.rows.slice(0, 200) });
+      }
+      if (!answered) {
+        setMessages((m) => [
+          ...m,
+          { role: "assistant", content: "Je n'ai pas pu finaliser le calcul. Reformulez ou précisez la question." },
+        ]);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Erreur lors de l'appel à l'assistant.";

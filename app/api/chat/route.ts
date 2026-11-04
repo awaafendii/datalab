@@ -75,32 +75,33 @@ interface SheetContext {
 
 function buildSystem(): string {
   return [
-    "Tu es un assistant IA spécialisé en ANALYSE DE DONNÉES, comme un chatbot (type ChatGPT) dédié à la data.",
-    "Tu réponds en français, de façon claire et conversationnelle, à TOUTE question liée aux données chargées :",
-    "totaux, moyennes, min/max, comparaisons, classements, tendances, répartitions, corrélations probables,",
-    "interprétations, définitions, conseils méthodologiques, aide à la décision. Tu n'es PAS limité à des",
-    "questions prédéfinies.",
+    "Tu es un assistant IA spécialisé en ANALYSE DE DONNÉES (chatbot type ChatGPT dédié à la data).",
+    "Tu réponds en français à TOUTE question sur les données chargées. Tu n'es PAS limité à des questions prédéfinies.",
     "",
-    "On te fournit, pour chaque FEUILLE du classeur : le schéma des colonnes, des STATISTIQUES AGRÉGÉES",
-    "(somme, moyenne, min, max, comptes, top catégories) et un petit échantillon. Appuie tes réponses sur",
-    "ces chiffres et CITE-les. Si une valeur précise n'est pas calculable à partir du contexte fourni",
-    "(ex. un croisement très spécifique), dis-le honnêtement et propose de produire un tableau.",
-    "N'invente jamais de chiffres absents du contexte.",
+    "On te fournit, pour chaque FEUILLE : le schéma, des STATISTIQUES AGRÉGÉES GLOBALES (somme, moyenne,",
+    "min, max, comptes, top catégories) et un petit échantillon. Ces stats globales NE couvrent PAS les",
+    "CROISEMENTS précis (ex. moyenne PAR catégorie, filtres combinés, Top N par groupe).",
     "",
-    "Format de réponse : réponds de préférence par un objet JSON STRICT :",
-    '{"answer":"ta réponse en français (peut contenir des listes, des sauts de ligne)",',
-    ' "plan": null OU un plan de tableau si un tableau aide ou est demandé,',
-    ' "sheet": null OU le nom de la feuille concernée par le plan}',
+    "TOOL-USE : pour obtenir un chiffre EXACT non disponible dans le contexte, tu peux DEMANDER un calcul.",
+    "DataLab l'exécute sur TOUTES les données et te renvoie le résultat exact (« Résultats calculés »),",
+    "puis tu réponds à partir de ces chiffres.",
     "",
-    "Le champ \"plan\" (optionnel) suit ce format, avec des colonnes EXISTANTES (noms exacts) :",
-    '{"title":"...","steps":[ {"op":"filter|select|rename|derive|sort|group_aggregate|limit", ...} ],"explanation":"..."}',
-    "Opérations: filter(column,operator,value), select(columns[]), rename(renames[{from,to}]),",
-    "derive(name,formula avec [Colonne]), sort(by[{column,dir}]), group_aggregate(group_by[],measures[{column,agg,as}]) avec agg=sum|avg|median|min|max|count|count_distinct, limit(n).",
-    "Si aucun tableau n'est utile, mets \"plan\": null et réponds simplement dans \"answer\".",
+    "À CHAQUE tour, réponds par UN SEUL objet JSON strict (aucun texte autour) :",
+    '- Pour demander un calcul : {"action":"compute","sheet":"<nom exact de la feuille>","plan":{"title":"...","steps":[...],"explanation":"..."}}',
+    '- Pour la réponse finale (conversationnelle, cite les chiffres) : {"action":"answer","answer":"..."}',
+    "",
+    "Demande un calcul UNIQUEMENT si nécessaire ; sinon réponds directement avec les stats fournies.",
+    "Si des « Résultats calculés » te sont déjà fournis, utilise-les et réponds (action:\"answer\").",
+    "N'invente JAMAIS de chiffres.",
+    "",
+    "Format du plan (colonnes EXISTANTES, noms exacts) — steps = opérations :",
+    "filter(column,operator,value) operator= =|!=|>|<|>=|<=|contains|in|not_in ; select(columns[]) ;",
+    "rename(renames[{from,to}]) ; derive(name, formula avec [Colonne], + - * / et parenthèses) ;",
+    "sort(by[{column,dir}]) ; group_aggregate(group_by[],measures[{column,agg,as}]) agg=sum|avg|median|min|max|count|count_distinct ; limit(n).",
   ].join("\n");
 }
 
-function buildUser(sheets: SheetContext[], question: string): string {
+function buildUser(sheets: SheetContext[], question: string, toolResults: unknown[]): string {
   const ctx = sheets.map((s) => ({
     feuille: s.name,
     colonnes: s.columns,
@@ -109,7 +110,16 @@ function buildUser(sheets: SheetContext[], question: string): string {
     repartitions: s.categoricalSummary,
     echantillon: s.sample,
   }));
-  return [`Contexte des feuilles (JSON) :`, JSON.stringify(ctx), "", `Question : ${question}`].join("\n");
+  const parts = [`Contexte des feuilles (JSON) :`, JSON.stringify(ctx)];
+  if (Array.isArray(toolResults) && toolResults.length) {
+    parts.push(
+      "",
+      "Résultats calculés (EXACTS, calculés sur toutes les données — utilise-les pour répondre) :",
+      JSON.stringify(toolResults).slice(0, 60000),
+    );
+  }
+  parts.push("", `Question : ${question}`);
+  return parts.join("\n");
 }
 
 function extractJson(text: string): Record<string, unknown> | null {
@@ -180,7 +190,12 @@ export async function POST(req: Request) {
   if (raw.length > MAX_BODY_BYTES) {
     return Response.json({ error: "Requête trop volumineuse." }, { status: 413 });
   }
-  let body: { sheets?: SheetContext[]; history?: { role: "user" | "assistant"; content: string }[]; question?: string };
+  let body: {
+    sheets?: SheetContext[];
+    history?: { role: "user" | "assistant"; content: string }[];
+    question?: string;
+    toolResults?: unknown[];
+  };
   try {
     body = JSON.parse(raw);
   } catch {
@@ -203,7 +218,7 @@ export async function POST(req: Request) {
   }
 
   const system = buildSystem();
-  const user = buildUser(body.sheets, body.question);
+  const user = buildUser(body.sheets, body.question, Array.isArray(body.toolResults) ? body.toolResults : []);
   const history = Array.isArray(body.history) ? body.history : [];
   const errors: string[] = [];
 
@@ -220,16 +235,21 @@ export async function POST(req: Request) {
       errors.push(`${model}: réponse vide`);
       continue;
     }
-    const parsed = extractJson(text);
-    if (parsed && typeof (parsed as { answer?: unknown }).answer === "string") {
-      return Response.json({
-        answer: (parsed as { answer: string }).answer,
-        plan: (parsed as { plan?: unknown }).plan ?? null,
-        sheet: (parsed as { sheet?: unknown }).sheet ?? null,
-      });
+    const parsed = extractJson(text) as
+      | { action?: string; answer?: unknown; plan?: { steps?: unknown }; sheet?: unknown }
+      | null;
+    if (parsed) {
+      const planOk = parsed.plan && Array.isArray(parsed.plan.steps);
+      // Demande de calcul (tool-use) : action compute OU plan présent sans réponse.
+      if ((parsed.action === "compute" || (planOk && typeof parsed.answer !== "string")) && planOk) {
+        return Response.json({ action: "compute", plan: parsed.plan, sheet: typeof parsed.sheet === "string" ? parsed.sheet : null });
+      }
+      if (typeof parsed.answer === "string") {
+        return Response.json({ action: "answer", answer: parsed.answer });
+      }
     }
-    // Tolérant : le modèle a répondu en texte brut -> on l'utilise tel quel.
-    return Response.json({ answer: text, plan: null, sheet: null });
+    // Tolérant : le modèle a répondu en texte brut -> réponse finale.
+    return Response.json({ action: "answer", answer: text });
   }
 
   return Response.json(

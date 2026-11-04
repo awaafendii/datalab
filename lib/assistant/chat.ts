@@ -36,24 +36,42 @@ export function buildSheetsContext(workbook: WorkbookInput): SheetContext[] {
   });
 }
 
-export interface ChatReply {
-  answer: string;
-  plan?: TransformPlan | null; // tableau optionnel à exécuter localement
+// Résultat EXACT d'un calcul demandé par l'IA (tool-use), renvoyé à l'IA au
+// tour suivant pour qu'elle réponde avec les vrais chiffres.
+export interface ToolResult {
+  title: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+}
+
+// Une étape de la boucle agentique : soit l'IA demande un calcul (compute),
+// soit elle donne la réponse finale (answer).
+export interface ChatStep {
+  action: "compute" | "answer";
+  answer?: string;
+  plan?: TransformPlan | null; // présent si action === "compute"
   sheet?: string | null; // feuille sur laquelle exécuter le plan
 }
 
-export async function fetchChatReply(
+export async function fetchChatStep(
   sheets: SheetContext[],
   history: { role: "user" | "assistant"; content: string }[],
   question: string,
-): Promise<ChatReply> {
+  toolResults: ToolResult[] = [],
+): Promise<ChatStep> {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sheets, history, question }),
+    body: JSON.stringify({ sheets, history, question, toolResults }),
   });
 
-  let data: { answer?: string; plan?: TransformPlan | null; sheet?: string | null; error?: string };
+  let data: {
+    action?: string;
+    answer?: string;
+    plan?: TransformPlan | null;
+    sheet?: string | null;
+    error?: string;
+  };
   try {
     data = await res.json();
   } catch {
@@ -62,9 +80,14 @@ export async function fetchChatReply(
   if (!res.ok || data.error) {
     throw new Error(data.error || `Erreur (${res.status}) lors de l'appel à l'assistant.`);
   }
+
+  const plan = data.plan && Array.isArray(data.plan.steps) ? data.plan : null;
+  // "compute" seulement si un plan exploitable est fourni ; sinon on répond.
+  if (data.action === "compute" && plan) {
+    return { action: "compute", plan, sheet: typeof data.sheet === "string" ? data.sheet : null };
+  }
   return {
+    action: "answer",
     answer: typeof data.answer === "string" && data.answer.trim() ? data.answer : "(réponse vide)",
-    plan: data.plan && Array.isArray(data.plan.steps) ? data.plan : null,
-    sheet: typeof data.sheet === "string" ? data.sheet : null,
   };
 }
