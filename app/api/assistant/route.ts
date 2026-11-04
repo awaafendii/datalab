@@ -112,7 +112,8 @@ function buildSystemPrompt(): string {
     '- {"op":"group_aggregate","group_by":["Col"],"measures":[{"column":"Montant","agg":"sum|avg|median|min|max|count|count_distinct","as":"Nom résultat"}]}',
     '- {"op":"limit","n":10}',
     "",
-    "Règles : reprends les noms de colonnes EXACTEMENT tels que fournis. Pour une colonne calculée,",
+    "Règles : utilise les noms de colonnes EXACTEMENT comme dans la liste « Noms EXACTS des colonnes »,",
+    "sans JAMAIS y ajouter le type ni de parenthèses (écris \"Service\", pas \"Service (texte)\"). Pour une colonne calculée,",
     "référence toujours les colonnes entre crochets. Si la demande est ambiguë, choisis l'interprétation",
     "la plus utile. Réponds en français pour 'title' et 'explanation'.",
   ].join("\n");
@@ -121,7 +122,6 @@ function buildSystemPrompt(): string {
 function buildUserPrompt(body: AssistantBody): string {
   const columns = (body.columns ?? []).slice(0, MAX_COLUMNS);
   const types = body.columnTypes ?? {};
-  const schema = columns.map((c) => (types[c] ? `${c} (${types[c]})` : c));
   const sample = (body.sampleRows ?? []).slice(0, MAX_SAMPLE_ROWS).map((row) => {
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(row).slice(0, MAX_COLUMNS)) {
@@ -130,7 +130,8 @@ function buildUserPrompt(body: AssistantBody): string {
     return out;
   });
   return [
-    `Colonnes : ${JSON.stringify(schema)}`,
+    `Noms EXACTS des colonnes (à reprendre TELS QUELS, sans rien ajouter) : ${JSON.stringify(columns)}`,
+    `Types (information seulement, NE PAS inclure dans les noms) : ${JSON.stringify(types)}`,
     `Échantillon (JSON) : ${JSON.stringify(sample)}`,
     "",
     `Demande de l'utilisateur : ${body.userRequest ?? ""}`,

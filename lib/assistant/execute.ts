@@ -250,33 +250,39 @@ export function executePlan(
   let table: Table = { columns: [...dataset.columns], rows: dataset.rows.map((r) => ({ ...r })) };
   const stepNotes: string[] = [];
   const warnings: string[] = [];
-  const hasCol = (c: string) => table.columns.includes(c);
-
   for (const step of plan.steps ?? []) {
     const before = table.rows.length;
-    table = applyStep(step, table, warnings, hasCol);
+    table = applyStep(step, table, warnings);
     stepNotes.push(describeStep(step, before, table.rows.length));
   }
 
   return { columns: table.columns, rows: table.rows, stepNotes, warnings };
 }
 
-function applyStep(
-  step: PlanStep,
-  table: Table,
-  warnings: string[],
-  hasCol: (c: string) => boolean,
-): Table {
+// Résout un nom de colonne demandé par l'IA vers un nom RÉEL : correspondance
+// exacte, sinon insensible à la casse et en ignorant un suffixe « (type) »
+// éventuellement ajouté par le modèle (« Service (texte) » -> « Service »).
+function makeResolver(columns: string[]): (name: string) => string {
+  const norm = (s: string) =>
+    String(s).toLowerCase().replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const map = new Map(columns.map((c) => [norm(c), c]));
+  return (name: string) => (columns.includes(name) ? name : map.get(norm(name)) ?? name);
+}
+
+function applyStep(step: PlanStep, table: Table, warnings: string[]): Table {
+  const resolve = makeResolver(table.columns);
+  const hasCol = (c: string) => table.columns.includes(c);
   switch (step.op) {
     case "filter": {
-      if (!hasCol(step.column)) {
+      const col = resolve(step.column);
+      if (!hasCol(col)) {
         warnings.push(`Filtre ignoré : colonne « ${step.column} » introuvable.`);
         return table;
       }
-      return { columns: table.columns, rows: table.rows.filter((r) => compare(r[step.column] ?? null, step.operator, step.value)) };
+      return { columns: table.columns, rows: table.rows.filter((r) => compare(r[col] ?? null, step.operator, step.value)) };
     }
     case "select": {
-      const cols = step.columns.filter((c) => {
+      const cols = step.columns.map(resolve).filter((c) => {
         if (table.columns.includes(c)) return true;
         warnings.push(`Colonne « ${c} » introuvable (ignorée).`);
         return false;
@@ -285,7 +291,7 @@ function applyStep(
       return { columns: keep, rows: table.rows.map((r) => Object.fromEntries(keep.map((c) => [c, r[c] ?? null]))) };
     }
     case "rename": {
-      const map = new Map(step.renames.filter((x) => x && x.from && x.to).map((x) => [x.from, x.to]));
+      const map = new Map(step.renames.filter((x) => x && x.from && x.to).map((x) => [resolve(x.from), x.to]));
       const columns = table.columns.map((c) => map.get(c) ?? c);
       const rows = table.rows.map((r) => {
         const o: Row = {};
@@ -307,7 +313,7 @@ function applyStep(
       return { columns, rows };
     }
     case "sort": {
-      const by = (step.by ?? []).filter((s) => s && s.column);
+      const by = (step.by ?? []).filter((s) => s && s.column).map((s) => ({ column: resolve(s.column), dir: s.dir }));
       const rows = [...table.rows].sort((ra, rb) => {
         for (const { column, dir } of by) {
           const an = toNumber(ra[column] ?? null);
@@ -322,7 +328,7 @@ function applyStep(
       return { columns: table.columns, rows };
     }
     case "group_aggregate": {
-      const groupBy = (step.group_by ?? []).filter((c) => table.columns.includes(c));
+      const groupBy = (step.group_by ?? []).map(resolve).filter((c) => table.columns.includes(c));
       const measures = (step.measures ?? []).filter((m) => m && m.agg);
       const groups = new Map<string, Row[]>();
       for (const r of table.rows) {
@@ -339,7 +345,8 @@ function applyStep(
         groupBy.forEach((c) => (o[c] = grp[0]![c] ?? null));
         measures.forEach((m) => {
           const name = m.as || `${AGG_LABEL[m.agg]} ${m.column || ""}`.trim();
-          o[name] = aggregate(m.agg, m.column ? grp.map((r) => r[m.column] ?? null) : grp.map(() => 1));
+          const mcol = m.column ? resolve(m.column) : "";
+          o[name] = aggregate(m.agg, mcol ? grp.map((r) => r[mcol] ?? null) : grp.map(() => 1));
         });
         rows.push(o);
       }
