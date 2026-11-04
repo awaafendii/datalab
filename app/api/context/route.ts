@@ -5,19 +5,19 @@
 // plus fine du secteur d'activité, des en-têtes et des colonnes clés que le
 // dictionnaire heuristique local (lib/sectors.ts).
 //
-// Par défaut : **Google Gemini** via son endpoint compatible OpenAI (offre
-// gratuite généreuse, rapide, rien à lancer). Il suffit de fournir AI_API_KEY
-// (clé Google AI Studio). Alternative 100 % locale / hors-ligne : pointer
-// AI_BASE_URL sur LM Studio (http://localhost:1234/v1), qui ne requiert pas de clé.
+// Par défaut : **Groq** (api.groq.com), endpoint compatible OpenAI, palier
+// gratuit sans carte bancaire, très rapide. Il suffit de fournir AI_API_KEY
+// (clé Groq). Alternative 100 % locale / hors-ligne : pointer AI_BASE_URL sur
+// LM Studio (http://localhost:1234/v1), qui ne requiert pas de clé.
 //
 // Configuration (variables d'environnement, côté serveur uniquement — la clé
 // n'est JAMAIS exposée au navigateur ni incluse dans l'installeur) :
 //   - AI_BASE_URL : URL du serveur compatible OpenAI.
-//       • En ligne (défaut) : https://generativelanguage.googleapis.com/v1beta/openai (Google Gemini).
+//       • En ligne (défaut) : https://api.groq.com/openai/v1 (Groq).
 //       • Local / hors-ligne : http://localhost:1234/v1 (LM Studio, sans clé).
 //   - AI_MODELS   : identifiants de modèles séparés par des virgules, essayés
-//       dans l'ordre jusqu'à une réponse valide (défaut "gemini-3.8-flash" ;
-//       id SANS préfixe sur l'API Google directe, contrairement à OpenRouter/ngrok).
+//       dans l'ordre jusqu'à une réponse valide (défaut
+//       "llama-3.1-8b-instant,gemma2-9b-it,openai/gpt-oss-120b" ; ids du catalogue Groq).
 //   - AI_API_KEY  : clé du service en ligne (obligatoire si host ≠ localhost).
 //   - AI_TIMEOUT_MS : délai max par modèle avant bascule (défaut 25000).
 //   - ALLOWED_ORIGIN : origine supplémentaire autorisée (déploiement en ligne).
@@ -32,8 +32,8 @@
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-const AI_BASE_URL = (process.env.AI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/+$/, "");
-const AI_MODELS = (process.env.AI_MODELS || "gemini-4-argon,gemini-3.8-flash")
+const AI_BASE_URL = (process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+const AI_MODELS = (process.env.AI_MODELS || "llama-3.1-8b-instant,gemma2-9b-it,openai/gpt-oss-120b")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
