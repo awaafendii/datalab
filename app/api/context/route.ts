@@ -33,7 +33,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const AI_BASE_URL = (process.env.AI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/+$/, "");
-const AI_MODELS = (process.env.AI_MODELS || "gemini-3.8-flash")
+const AI_MODELS = (process.env.AI_MODELS || "gemini-4-argon,gemini-3.8-flash")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
