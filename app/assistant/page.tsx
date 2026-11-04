@@ -5,8 +5,8 @@ import * as XLSX from "xlsx";
 import { Sparkles, Send, Download, FileSpreadsheet, Table2, FileText } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import FileUpload from "@/components/FileUpload";
-import { fetchTransformPlan } from "@/lib/assistant/client";
 import { executePlan } from "@/lib/assistant/execute";
+import { buildSheetsContext, fetchChatReply } from "@/lib/assistant/chat";
 import { fetchSynthesisReport, downloadMarkdown, downloadDocx } from "@/lib/assistant/report";
 import type { SynthesisReport } from "@/lib/assistant/report";
 import type { Dataset, Row, WorkbookInput } from "@/lib/types";
@@ -18,14 +18,6 @@ interface ChatMessage {
 }
 
 const MAX_DISPLAY_ROWS = 500;
-
-// Demande de type « analyse / synthèse » (narratif attendu) plutôt qu'une
-// simple transformation : on générera aussi le rapport rédigé (Phase 2).
-function isAnalyticalRequest(text: string): boolean {
-  return /analys|synth[eéè]|r[ée]sum|rapport|d[ée]cision|tendance|insight|commente|interpr[ée]t|explique|constat|recommand/i.test(
-    text,
-  );
-}
 
 export default function AssistantPage() {
   const [workbook, setWorkbook] = useState<WorkbookInput | null>(null);
@@ -58,10 +50,10 @@ export default function AssistantPage() {
 
   const examples = useMemo(
     () => [
-      "Analyse cette base de données et donne-moi les points clés, tendances et recommandations.",
-      "Regroupe par la 1re colonne de texte et calcule la moyenne de la 1re colonne numérique.",
-      "Garde seulement les colonnes clés et trie par la valeur la plus élevée.",
-      "Ajoute une colonne « Taux » = réalisé / cible * 100 et classe du plus grand au plus petit.",
+      "Quelles sont les grandes tendances de ces données ? Donne-moi les points clés.",
+      "Quelle catégorie a la valeur moyenne la plus élevée, et pourquoi est-ce notable ?",
+      "Y a-t-il des anomalies ou valeurs extrêmes à surveiller ?",
+      "Fais-moi un tableau récapitulatif par catégorie, puis exporte-le.",
     ],
     [],
   );
@@ -78,32 +70,27 @@ export default function AssistantPage() {
   }
 
   async function run(request: string) {
-    if (!dataset || !request.trim() || loading) return;
+    if (!workbook || !request.trim() || loading) return;
     setLoading(true);
     setError(null);
-    setReport(null);
-    setReportError(null);
-    const history = messages.slice(-6);
+    const history = messages.slice(-8);
     setMessages((m) => [...m, { role: "user", content: request }]);
     setInput("");
     try {
-      const p = await fetchTransformPlan(dataset, request, history);
-      const r = executePlan(dataset, p);
-      setPlan(p);
-      setResult(r);
-      const note = [
-        p.title ? `**${p.title}**` : "",
-        p.explanation,
-        `${r.rows.length} ligne(s), ${r.columns.length} colonne(s).`,
-        r.warnings.length ? `⚠️ ${r.warnings.join(" ")}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-      setMessages((m) => [...m, { role: "assistant", content: note }]);
-      // Demande analytique : on produit aussi le rapport rédigé (constats,
-      // recommandations) en plus du tableau.
-      if (isAnalyticalRequest(request)) {
-        await generateReport(p.title || "Analyse", r.columns, r.rows);
+      const sheets = buildSheetsContext(workbook);
+      const reply = await fetchChatReply(sheets, history, request);
+      setMessages((m) => [...m, { role: "assistant", content: reply.answer }]);
+      // L'IA peut accompagner sa réponse d'un tableau : on l'exécute localement
+      // sur la feuille concernée (ou la feuille sélectionnée par défaut).
+      if (reply.plan) {
+        const ds =
+          (reply.sheet && workbook.sheets.find((s) => s.name === reply.sheet)?.dataset) ||
+          workbook.sheets[sheetIdx]?.dataset ||
+          workbook.sheets[0]?.dataset;
+        if (ds) {
+          setPlan(reply.plan);
+          setResult(executePlan(ds, reply.plan));
+        }
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Erreur lors de l'appel à l'assistant.";
@@ -151,11 +138,10 @@ export default function AssistantPage() {
         <Sparkles size={22} /> Assistant IA
       </h1>
       <p className="subtitle">
-        Décrivez en langage naturel la transformation voulue. L’IA propose un plan, DataLab
-        l’exécute <strong>localement</strong> (vos lignes ne sont jamais envoyées — seuls le schéma
-        et un échantillon le sont) et produit un document final exportable. Pour une demande d’<strong>analyse</strong>
-        (« analyse… », « synthèse… »), il génère en plus un <strong>rapport rédigé</strong> (constats,
-        recommandations), exportable en Word.
+        Chargez un fichier (Excel multi-feuilles, CSV) et <strong>posez n’importe quelle question</strong> sur vos
+        données : totaux, moyennes, comparaisons, tendances, interprétations, recommandations… comme un chatbot
+        spécialisé en data. L’IA s’appuie sur le schéma et des <strong>statistiques calculées localement</strong>
+        (vos lignes brutes ne sont jamais envoyées) et peut aussi produire un <strong>tableau exportable</strong>.
       </p>
 
       {!workbook && (
@@ -248,7 +234,7 @@ export default function AssistantPage() {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ex. : regroupe par service et calcule le salaire moyen, trié décroissant"
+                placeholder="Posez une question sur vos données… (ex. : quelles tendances ? quelle catégorie domine ?)"
                 disabled={loading}
                 style={{ flex: 1, padding: "10px 12px" }}
               />
