@@ -14,7 +14,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const AI_BASE_URL = (process.env.AI_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
-const AI_MODELS = (process.env.AI_MODELS || "openai/gpt-oss-120b,llama-3.1-8b-instant")
+const AI_MODELS = (process.env.AI_MODELS || "openai/gpt-oss-120b,openai/gpt-oss-20b")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);

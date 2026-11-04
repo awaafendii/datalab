@@ -20,17 +20,34 @@ export interface SheetContext {
 }
 
 const MAX_SHEETS = 10;
-const MAX_SAMPLE = 6;
+const MAX_SAMPLE = 3;
+const MAX_COLS_SUMMARY = 40; // borne le nombre de colonnes résumées par feuille
+const MAX_TOP = 5; // top catégories par colonne catégorielle
 
+const round = (n: number) => (Number.isFinite(n) ? Math.round(n * 100) / 100 : n);
+
+// Contexte COMPACT (pour rester sous la limite de tokens/minute du palier
+// gratuit) : échantillon réduit, top catégories limité, nombres arrondis.
 export function buildSheetsContext(workbook: WorkbookInput): SheetContext[] {
   return workbook.sheets.slice(0, MAX_SHEETS).map((s) => {
     const sum = summarizeTable(s.dataset.columns, s.dataset.rows);
     return {
       name: s.name,
-      columns: sum.columns,
+      columns: sum.columns.slice(0, 60),
       rowCount: sum.rowCount,
-      numericSummary: sum.numericSummary,
-      categoricalSummary: sum.categoricalSummary,
+      numericSummary: sum.numericSummary.slice(0, MAX_COLS_SUMMARY).map((x) => ({
+        column: x.column,
+        count: x.count,
+        sum: round(x.sum),
+        mean: round(x.mean),
+        min: round(x.min),
+        max: round(x.max),
+      })),
+      categoricalSummary: sum.categoricalSummary.slice(0, MAX_COLS_SUMMARY).map((c) => ({
+        column: c.column,
+        unique: c.unique,
+        top: c.top.slice(0, MAX_TOP),
+      })),
       sample: sum.sampleRows.slice(0, MAX_SAMPLE),
     };
   });
