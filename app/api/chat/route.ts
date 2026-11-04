@@ -96,10 +96,16 @@ function buildSystem(): string {
     '- Calcul : {"action":"compute","sheet":"<nom exact de la feuille>","plan":{"title":"...","steps":[...],"explanation":"..."}}',
     '- Réponse : {"action":"answer","answer":"...(cite les chiffres)"}',
     "",
-    "Format du plan (colonnes EXISTANTES, noms exacts) — steps = opérations :",
-    "filter(column,operator,value) operator= =|!=|>|<|>=|<=|contains|in|not_in ; select(columns[]) ;",
-    "rename(renames[{from,to}]) ; derive(name, formula avec [Colonne], + - * / et parenthèses) ;",
-    "sort(by[{column,dir}]) ; group_aggregate(group_by[],measures[{column,agg,as}]) agg=sum|avg|median|min|max|count|count_distinct ; limit(n).",
+    "Dans le plan, 'steps' est un TABLEAU D'OBJETS JSON (jamais des chaînes de texte).",
+    "Colonnes EXISTANTES, noms exacts. Opérations autorisées (un objet par étape) :",
+    '{"op":"filter","column":"Col","operator":"=|!=|>|<|>=|<=|contains|in|not_in","value": valeur}',
+    '{"op":"select","columns":["Col1","Col2"]}',
+    '{"op":"rename","renames":[{"from":"Ancien","to":"Nouveau"}]}',
+    '{"op":"derive","name":"Nouvelle","formula":"[Col A] / [Col B] * 100"}',
+    '{"op":"sort","by":[{"column":"Col","dir":"desc"}]}',
+    '{"op":"group_aggregate","group_by":["Col"],"measures":[{"column":"Val","agg":"avg","as":"Résultat"}]} (agg=sum|avg|median|min|max|count|count_distinct)',
+    '{"op":"limit","n":10}',
+    'EXEMPLE de réponse compute complète : {"action":"compute","sheet":"Etudiants","plan":{"title":"Meilleure moyenne par faculté","steps":[{"op":"group_aggregate","group_by":["Faculte"],"measures":[{"column":"Moyenne","agg":"avg","as":"Moyenne_moyenne"}]},{"op":"sort","by":[{"column":"Moyenne_moyenne","dir":"desc"}]},{"op":"limit","n":1}],"explanation":"..."}}',
   ].join("\n");
 }
 
