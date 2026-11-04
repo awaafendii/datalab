@@ -2,12 +2,14 @@
 
 import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { Sparkles, Send, Download, FileSpreadsheet, Table2 } from "lucide-react";
+import { Sparkles, Send, Download, FileSpreadsheet, Table2, FileText } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import FileUpload from "@/components/FileUpload";
 import { fetchTransformPlan } from "@/lib/assistant/client";
 import { executePlan } from "@/lib/assistant/execute";
-import type { Dataset, WorkbookInput } from "@/lib/types";
+import { fetchSynthesisReport, downloadMarkdown, downloadDocx } from "@/lib/assistant/report";
+import type { SynthesisReport } from "@/lib/assistant/report";
+import type { Dataset, Row, WorkbookInput } from "@/lib/types";
 import type { ExecResult, TransformPlan } from "@/lib/assistant/types";
 
 interface ChatMessage {
@@ -26,8 +28,25 @@ export default function AssistantPage() {
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<TransformPlan | null>(null);
   const [result, setResult] = useState<ExecResult | null>(null);
+  const [report, setReport] = useState<SynthesisReport | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   const dataset: Dataset | null = workbook?.sheets[sheetIdx]?.dataset ?? null;
+
+  async function generateReport(title: string, columns: string[], rows: Row[]) {
+    if (reportLoading || rows.length === 0) return;
+    setReportLoading(true);
+    setReportError(null);
+    setReport(null);
+    try {
+      setReport(await fetchSynthesisReport(title, columns, rows));
+    } catch (e) {
+      setReportError(e instanceof Error ? e.message : "Erreur lors de la génération du rapport.");
+    } finally {
+      setReportLoading(false);
+    }
+  }
 
   const examples = useMemo(
     () => [
@@ -45,12 +64,16 @@ export default function AssistantPage() {
     setPlan(null);
     setResult(null);
     setError(null);
+    setReport(null);
+    setReportError(null);
   }
 
   async function run(request: string) {
     if (!dataset || !request.trim() || loading) return;
     setLoading(true);
     setError(null);
+    setReport(null);
+    setReportError(null);
     const history = messages.slice(-6);
     setMessages((m) => [...m, { role: "user", content: request }]);
     setInput("");
@@ -229,12 +252,19 @@ export default function AssistantPage() {
             <div className="card" style={{ marginTop: 16 }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
                 <h2 style={{ margin: 0 }}>{plan?.title || "Document produit"}</h2>
-                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button className="btn" onClick={exportXlsx}>
                     <FileSpreadsheet size={16} /> Export Excel
                   </button>
                   <button className="btn" onClick={exportCsv}>
                     <Download size={16} /> Export CSV
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => generateReport(plan?.title || "Document produit", result.columns, result.rows)}
+                    disabled={reportLoading}
+                  >
+                    {reportLoading ? <span className="spinner" /> : <FileText size={16} />} Rapport de synthèse
                   </button>
                 </div>
               </div>
@@ -308,6 +338,55 @@ export default function AssistantPage() {
                   Aperçu des {MAX_DISPLAY_ROWS} premières lignes sur {result.rows.length}. L’export
                   contient tout.
                 </div>
+              )}
+            </div>
+          )}
+
+          {reportError && (
+            <div className="error-box" style={{ marginTop: 16 }}>
+              {reportError}
+            </div>
+          )}
+
+          {report && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+                <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                  <FileText size={20} /> {report.title}
+                </h2>
+                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                  <button className="btn" onClick={() => downloadDocx(report)}>
+                    <Download size={16} /> Word
+                  </button>
+                  <button className="btn" onClick={() => downloadMarkdown(report)}>
+                    <Download size={16} /> Markdown
+                  </button>
+                </div>
+              </div>
+              {report.overview && <p style={{ whiteSpace: "pre-wrap" }}>{report.overview}</p>}
+              {report.findings.length > 0 && (
+                <>
+                  <h3>Constats</h3>
+                  <ul>
+                    {report.findings.map((f, i) => (
+                      <li key={i} style={{ marginBottom: 4 }}>
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {report.recommendations.length > 0 && (
+                <>
+                  <h3>Recommandations</h3>
+                  <ul>
+                    {report.recommendations.map((f, i) => (
+                      <li key={i} style={{ marginBottom: 4 }}>
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                </>
               )}
             </div>
           )}
