@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FileSearch, Table2, Wallet } from "lucide-react";
+import { FileSearch, Table2, Wallet, Sparkles } from "lucide-react";
 import { isModuleEnabled } from "@/lib/modules";
 
 // Navigation entre les modules : analyse de données tabulaires, contrôle de
@@ -12,11 +12,15 @@ export default function AppNav() {
   const path = usePathname() ?? "/";
   const isDocs = path.startsWith("/documents");
   const isExec = path.startsWith("/execution");
-  const isData = !isDocs && !isExec;
+  const isAssistant = path.startsWith("/assistant");
+  const isData = !isDocs && !isExec && !isAssistant;
   return (
     <nav className="app-nav" aria-label="Modules">
       <Link href="/" className={isData ? "active" : ""}>
         <Table2 size={15} /> Données
+      </Link>
+      <Link href="/assistant" className={isAssistant ? "active" : ""}>
+        <Sparkles size={15} /> Assistant IA
       </Link>
       {isModuleEnabled("documents") && (
         <Link href="/documents" className={isDocs ? "active" : ""}>
