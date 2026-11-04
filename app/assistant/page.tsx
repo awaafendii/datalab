@@ -19,6 +19,14 @@ interface ChatMessage {
 
 const MAX_DISPLAY_ROWS = 500;
 
+// Demande de type « analyse / synthèse » (narratif attendu) plutôt qu'une
+// simple transformation : on générera aussi le rapport rédigé (Phase 2).
+function isAnalyticalRequest(text: string): boolean {
+  return /analys|synth[eéè]|r[ée]sum|rapport|d[ée]cision|tendance|insight|commente|interpr[ée]t|explique|constat|recommand/i.test(
+    text,
+  );
+}
+
 export default function AssistantPage() {
   const [workbook, setWorkbook] = useState<WorkbookInput | null>(null);
   const [sheetIdx, setSheetIdx] = useState(0);
@@ -50,6 +58,7 @@ export default function AssistantPage() {
 
   const examples = useMemo(
     () => [
+      "Analyse cette base de données et donne-moi les points clés, tendances et recommandations.",
       "Regroupe par la 1re colonne de texte et calcule la moyenne de la 1re colonne numérique.",
       "Garde seulement les colonnes clés et trie par la valeur la plus élevée.",
       "Ajoute une colonne « Taux » = réalisé / cible * 100 et classe du plus grand au plus petit.",
@@ -91,6 +100,11 @@ export default function AssistantPage() {
         .filter(Boolean)
         .join("\n");
       setMessages((m) => [...m, { role: "assistant", content: note }]);
+      // Demande analytique : on produit aussi le rapport rédigé (constats,
+      // recommandations) en plus du tableau.
+      if (isAnalyticalRequest(request)) {
+        await generateReport(p.title || "Analyse", r.columns, r.rows);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Erreur lors de l'appel à l'assistant.";
       setError(msg);
@@ -139,7 +153,9 @@ export default function AssistantPage() {
       <p className="subtitle">
         Décrivez en langage naturel la transformation voulue. L’IA propose un plan, DataLab
         l’exécute <strong>localement</strong> (vos lignes ne sont jamais envoyées — seuls le schéma
-        et un échantillon le sont) et produit un document final exportable.
+        et un échantillon le sont) et produit un document final exportable. Pour une demande d’<strong>analyse</strong>
+        (« analyse… », « synthèse… »), il génère en plus un <strong>rapport rédigé</strong> (constats,
+        recommandations), exportable en Word.
       </p>
 
       {!workbook && (
