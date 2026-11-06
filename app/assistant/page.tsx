@@ -1,24 +1,101 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import * as XLSX from "xlsx";
-import { Sparkles, Send, Download, FileSpreadsheet, Table2, FileText } from "lucide-react";
+import {
+  Sparkles,
+  Send,
+  Copy,
+  Check,
+  FileSpreadsheet,
+  Download,
+  FileText,
+  Table2,
+} from "lucide-react";
 import AppNav from "@/components/AppNav";
 import FileUpload from "@/components/FileUpload";
-import { executePlan } from "@/lib/assistant/execute";
 import { buildSheetsContext, fetchChatStep } from "@/lib/assistant/chat";
 import type { ToolResult } from "@/lib/assistant/chat";
-import { fetchSynthesisReport, downloadMarkdown, downloadDocx } from "@/lib/assistant/report";
+import { executePlan } from "@/lib/assistant/execute";
+import {
+  fetchSynthesisReport,
+  reportToMarkdown,
+  downloadMarkdown,
+  downloadDocx,
+} from "@/lib/assistant/report";
 import type { SynthesisReport } from "@/lib/assistant/report";
-import type { Dataset, Row, WorkbookInput } from "@/lib/types";
-import type { ExecResult, TransformPlan } from "@/lib/assistant/types";
+import type { Row, WorkbookInput } from "@/lib/types";
+
+interface AttachedTable {
+  title: string;
+  columns: string[];
+  rows: Row[];
+}
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  table?: AttachedTable;
+  report?: SynthesisReport;
 }
 
-const MAX_DISPLAY_ROWS = 500;
+const MAX_DISPLAY_ROWS = 300;
+
+// Rendu markdown avec effet de frappe (streaming) pour les messages de l'IA.
+function AssistantContent({ text, animate }: { text: string; animate: boolean }) {
+  const [shown, setShown] = useState(animate ? 0 : text.length);
+  useEffect(() => {
+    if (!animate) {
+      setShown(text.length);
+      return;
+    }
+    setShown(0);
+    const step = Math.max(2, Math.ceil(text.length / 90));
+    const id = setInterval(() => {
+      setShown((s) => {
+        const n = s + step;
+        if (n >= text.length) {
+          clearInterval(id);
+          return text.length;
+        }
+        return n;
+      });
+    }, 16);
+    return () => clearInterval(id);
+  }, [text, animate]);
+  return (
+    <div className="md">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text.slice(0, shown)}</ReactMarkdown>
+    </div>
+  );
+}
+
+function exportTableXlsx(t: AttachedTable) {
+  const ws = XLSX.utils.json_to_sheet(t.rows as Record<string, unknown>[], { header: t.columns });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Résultat");
+  XLSX.writeFile(wb, `${t.title.slice(0, 60) || "tableau"}.xlsx`);
+}
+
+function exportTableCsv(t: AttachedTable) {
+  const esc = (v: unknown) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [
+    t.columns.map(esc).join(";"),
+    ...t.rows.map((r) => t.columns.map((c) => esc(r[c])).join(";")),
+  ];
+  const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${t.title.slice(0, 60) || "tableau"}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function AssistantPage() {
   const [workbook, setWorkbook] = useState<WorkbookInput | null>(null);
@@ -27,84 +104,61 @@ export default function AssistantPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [plan, setPlan] = useState<TransformPlan | null>(null);
-  const [result, setResult] = useState<ExecResult | null>(null);
-  const [report, setReport] = useState<SynthesisReport | null>(null);
-  const [reportLoading, setReportLoading] = useState(false);
-  const [reportError, setReportError] = useState<string | null>(null);
-
-  const dataset: Dataset | null = workbook?.sheets[sheetIdx]?.dataset ?? null;
-
-  async function generateReport(title: string, columns: string[], rows: Row[]) {
-    if (reportLoading || rows.length === 0) return;
-    setReportLoading(true);
-    setReportError(null);
-    setReport(null);
-    try {
-      setReport(await fetchSynthesisReport(title, columns, rows));
-    } catch (e) {
-      setReportError(e instanceof Error ? e.message : "Erreur lors de la génération du rapport.");
-    } finally {
-      setReportLoading(false);
-    }
-  }
+  const [copied, setCopied] = useState<number | null>(null);
+  const endRef = useRef<HTMLDivElement | null>(null);
 
   const examples = useMemo(
     () => [
-      "Quelles sont les grandes tendances de ces données ? Donne-moi les points clés.",
-      "Quelle catégorie a la valeur moyenne la plus élevée, et pourquoi est-ce notable ?",
-      "Y a-t-il des anomalies ou valeurs extrêmes à surveiller ?",
-      "Fais-moi un tableau récapitulatif par catégorie, puis exporte-le.",
+      "Résume ces données et les grandes tendances.",
+      "Quelle catégorie a la valeur moyenne la plus élevée ?",
+      "Y a-t-il des anomalies ou valeurs extrêmes ?",
+      "Fais-moi un tableau récapitulatif par catégorie.",
     ],
     [],
   );
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
   function onLoaded(wb: WorkbookInput) {
     setWorkbook(wb);
     setSheetIdx(0);
     setMessages([]);
-    setPlan(null);
-    setResult(null);
     setError(null);
-    setReport(null);
-    setReportError(null);
   }
 
   async function run(request: string) {
     if (!workbook || !request.trim() || loading) return;
     setLoading(true);
     setError(null);
-    const history = messages.slice(-8);
+    const history = messages.slice(-8).map((m) => ({ role: m.role, content: m.content }));
     setMessages((m) => [...m, { role: "user", content: request }]);
     setInput("");
     try {
       const sheets = buildSheetsContext(workbook);
       const toolResults: ToolResult[] = [];
+      let table: AttachedTable | undefined;
+      let answerText = "";
       let answered = false;
-      // Boucle tool-use : l'IA peut demander des calculs exacts (exécutés
-      // localement sur toutes les données) avant de répondre.
       for (let iter = 0; iter < 3 && !answered; iter++) {
         const step = await fetchChatStep(sheets, history, request, toolResults);
         if (step.action === "answer" || !step.plan) {
-          setMessages((m) => [...m, { role: "assistant", content: step.answer || "(réponse vide)" }]);
+          answerText = step.answer || "(réponse vide)";
           answered = true;
           break;
         }
-        // Calcul exact demandé par l'IA.
         const ds =
           (step.sheet && workbook.sheets.find((s) => s.name === step.sheet)?.dataset) ||
           workbook.sheets[sheetIdx]?.dataset ||
           workbook.sheets[0]?.dataset;
         if (!ds) {
-          setMessages((m) => [...m, { role: "assistant", content: "Données introuvables pour le calcul." }]);
+          answerText = "Données introuvables pour le calcul.";
           answered = true;
           break;
         }
         const r = executePlan(ds, step.plan);
-        setPlan(step.plan);
-        setResult(r);
-        // On ne renvoie au modèle qu'un EXTRAIT (le tableau complet est affiché
-        // à l'utilisateur) + le total, pour rester sous la limite de tokens.
+        table = { title: step.plan.title || "Résultat", columns: r.columns, rows: r.rows };
         const extrait = r.rows.slice(0, 20).map((row) => {
           const o: Record<string, unknown> = {};
           for (const c of r.columns) {
@@ -113,321 +167,290 @@ export default function AssistantPage() {
           }
           return o;
         });
-        toolResults.push({
-          title: step.plan.title || "Calcul",
-          columns: r.columns,
-          rows: extrait,
-          totalRows: r.rows.length,
-        });
+        toolResults.push({ title: table.title, columns: r.columns, rows: extrait, totalRows: r.rows.length });
       }
-      if (!answered) {
-        setMessages((m) => [
-          ...m,
-          { role: "assistant", content: "Je n'ai pas pu finaliser le calcul. Reformulez ou précisez la question." },
-        ]);
-      }
+      if (!answered) answerText = "Je n'ai pas pu finaliser le calcul. Reformulez la question.";
+      setMessages((m) => [...m, { role: "assistant", content: answerText, table }]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Erreur lors de l'appel à l'assistant.";
       setError(msg);
-      setMessages((m) => [...m, { role: "assistant", content: `❌ ${msg}` }]);
+      setMessages((m) => [...m, { role: "assistant", content: "❌ " + msg }]);
     } finally {
       setLoading(false);
     }
   }
 
-  function exportXlsx() {
-    if (!result) return;
-    const ws = XLSX.utils.json_to_sheet(result.rows as Record<string, unknown>[], {
-      header: result.columns,
-    });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Résultat");
-    XLSX.writeFile(wb, `${(plan?.title || "document").slice(0, 60)}.xlsx`);
+  async function makeReport(t: AttachedTable) {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const rep = await fetchSynthesisReport(t.title, t.columns, t.rows);
+      setMessages((m) => [...m, { role: "assistant", content: reportToMarkdown(rep), report: rep }]);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Erreur lors de la génération du rapport.";
+      setError(msg);
+      setMessages((m) => [...m, { role: "assistant", content: "❌ " + msg }]);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function exportCsv() {
-    if (!result) return;
-    const esc = (v: unknown) => {
-      const s = v === null || v === undefined ? "" : String(v);
-      return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const lines = [
-      result.columns.map(esc).join(";"),
-      ...result.rows.map((r) => result.columns.map((c) => esc(r[c])).join(";")),
-    ];
-    const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${(plan?.title || "document").slice(0, 60)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  function copyMessage(i: number, content: string) {
+    navigator.clipboard?.writeText(content).then(
+      () => {
+        setCopied(i);
+        setTimeout(() => setCopied((c) => (c === i ? null : c)), 1500);
+      },
+      () => {},
+    );
   }
+
+  const dataset = workbook?.sheets[sheetIdx]?.dataset ?? null;
 
   return (
     <main className="container">
+      <style>{CHAT_CSS}</style>
       <AppNav />
 
-      <h1 style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-        <Sparkles size={22} /> Assistant IA
-      </h1>
-      <p className="subtitle">
-        Chargez un fichier (Excel multi-feuilles, CSV) et <strong>posez n’importe quelle question</strong> sur vos
-        données : totaux, moyennes, comparaisons, tendances, interprétations, recommandations… comme un chatbot
-        spécialisé en data. L’IA s’appuie sur le schéma et des <strong>statistiques calculées localement</strong>
-        (vos lignes brutes ne sont jamais envoyées) et peut aussi produire un <strong>tableau exportable</strong>.
-      </p>
+      <div className="asst-head">
+        <h1 style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0" }}>
+          <Sparkles size={20} /> Assistant IA
+        </h1>
+        {workbook && dataset && (
+          <div className="asst-fileinfo">
+            <Table2 size={15} />
+            <span>{workbook.fileName}</span>
+            {workbook.sheets.length > 1 && (
+              <select
+                value={sheetIdx}
+                onChange={(e) => setSheetIdx(Number(e.target.value))}
+                aria-label="Feuille par défaut"
+              >
+                {workbook.sheets.map((s, i) => (
+                  <option key={s.name} value={i}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            <span className="hint">{dataset.rows.length} lignes</span>
+            <button className="btn btn-sm" onClick={() => setWorkbook(null)}>
+              Changer
+            </button>
+          </div>
+        )}
+      </div>
 
       {!workbook && (
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: 12 }}>
+          <p className="subtitle">
+            Chargez un fichier (Excel multi-feuilles, CSV) puis discutez avec l’assistant comme avec
+            un chatbot spécialisé en data : posez n’importe quelle question, il répond, calcule les
+            chiffres exacts et peut produire des tableaux exportables.
+          </p>
           <FileUpload onLoaded={onLoaded} />
         </div>
       )}
 
-      {workbook && dataset && (
-        <>
-          <div className="card" style={{ marginTop: 16 }}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-              <Table2 size={16} />
-              <strong>{workbook.fileName}</strong>
-              {workbook.sheets.length > 1 && (
-                <select
-                  value={sheetIdx}
-                  onChange={(e) => {
-                    setSheetIdx(Number(e.target.value));
-                    setPlan(null);
-                    setResult(null);
-                  }}
-                >
-                  {workbook.sheets.map((s, i) => (
-                    <option key={s.name} value={i}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <span className="hint">
-                {dataset.rows.length} lignes · {dataset.columns.length} colonnes
-              </span>
-              <button
-                className="btn"
-                style={{ marginLeft: "auto" }}
-                onClick={() => setWorkbook(null)}
-              >
-                Changer de fichier
-              </button>
-            </div>
-          </div>
-
-          {/* Conversation */}
-          <div className="card" style={{ marginTop: 16 }}>
+      {workbook && (
+        <div className="chat">
+          <div className="chat-scroll">
             {messages.length === 0 && (
-              <div className="hint" style={{ marginBottom: 12 }}>
-                Exemples de demandes :
-                <ul style={{ margin: "8px 0 0 0" }}>
+              <div className="chat-empty">
+                <Sparkles size={28} />
+                <p>Posez votre première question sur « {workbook.fileName} »</p>
+                <div className="chip-row">
                   {examples.map((ex) => (
-                    <li key={ex} style={{ marginBottom: 6 }}>
-                      <button
-                        className="btn"
-                        style={{ textAlign: "left" }}
-                        onClick={() => run(ex)}
-                        disabled={loading}
-                      >
-                        {ex}
-                      </button>
-                    </li>
+                    <button key={ex} className="chip" onClick={() => run(ex)} disabled={loading}>
+                      {ex}
+                    </button>
                   ))}
-                </ul>
+                </div>
               </div>
             )}
 
             {messages.map((m, i) => (
-              <div
-                key={i}
-                style={{
-                  margin: "8px 0",
-                  padding: "10px 12px",
-                  borderRadius: 8,
-                  background: m.role === "user" ? "rgba(59,130,246,0.12)" : "rgba(148,163,184,0.12)",
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                <strong>{m.role === "user" ? "Vous" : "Assistant"}</strong>
-                <div>{m.content}</div>
+              <div key={i} className={`msg ${m.role}`}>
+                <div className="avatar">{m.role === "user" ? "Vous" : <Sparkles size={15} />}</div>
+                <div className="bubble">
+                  {m.role === "assistant" ? (
+                    <AssistantContent text={m.content} animate={i === messages.length - 1} />
+                  ) : (
+                    <div className="user-text">{m.content}</div>
+                  )}
+
+                  {m.table && (
+                    <div className="result">
+                      <div className="result-head">
+                        <strong>{m.table.title}</strong>
+                        <span className="hint">
+                          {m.table.rows.length} ligne(s) · {m.table.columns.length} col.
+                        </span>
+                        <div className="result-actions">
+                          <button className="btn btn-sm" onClick={() => exportTableXlsx(m.table!)}>
+                            <FileSpreadsheet size={14} /> Excel
+                          </button>
+                          <button className="btn btn-sm" onClick={() => exportTableCsv(m.table!)}>
+                            <Download size={14} /> CSV
+                          </button>
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => makeReport(m.table!)}
+                            disabled={loading}
+                          >
+                            <FileText size={14} /> Rapport
+                          </button>
+                        </div>
+                      </div>
+                      <div className="result-table">
+                        <table>
+                          <thead>
+                            <tr>
+                              {m.table.columns.map((c) => (
+                                <th key={c}>{c}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {m.table.rows.slice(0, MAX_DISPLAY_ROWS).map((r, ri) => (
+                              <tr key={ri}>
+                                {m.table!.columns.map((c) => (
+                                  <td key={c}>
+                                    {r[c] === null || r[c] === undefined
+                                      ? ""
+                                      : typeof r[c] === "number"
+                                        ? (r[c] as number).toLocaleString("fr-FR", {
+                                            maximumFractionDigits: 4,
+                                          })
+                                        : String(r[c])}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {m.table.rows.length > MAX_DISPLAY_ROWS && (
+                        <div className="hint">
+                          Aperçu de {MAX_DISPLAY_ROWS} lignes sur {m.table.rows.length}. L’export
+                          contient tout.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {m.report && (
+                    <div className="result-actions" style={{ marginTop: 8 }}>
+                      <button className="btn btn-sm" onClick={() => downloadDocx(m.report!)}>
+                        <Download size={14} /> Word
+                      </button>
+                      <button className="btn btn-sm" onClick={() => downloadMarkdown(m.report!)}>
+                        <Download size={14} /> Markdown
+                      </button>
+                    </div>
+                  )}
+
+                  {m.role === "assistant" && (
+                    <button
+                      className="copy-btn"
+                      onClick={() => copyMessage(i, m.content)}
+                      title="Copier"
+                    >
+                      {copied === i ? <Check size={14} /> : <Copy size={14} />}
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                run(input);
-              }}
-              style={{ display: "flex", gap: 8, marginTop: 12 }}
-            >
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Posez une question sur vos données… (ex. : quelles tendances ? quelle catégorie domine ?)"
-                disabled={loading}
-                style={{ flex: 1, padding: "10px 12px" }}
-              />
-              <button className="btn" type="submit" disabled={loading || !input.trim()}>
-                {loading ? <span className="spinner" /> : <Send size={16} />} Envoyer
-              </button>
-            </form>
-            {error && (
-              <div className="error-box" style={{ marginTop: 12 }}>
-                {error}
+            {loading && (
+              <div className="msg assistant">
+                <div className="avatar">
+                  <Sparkles size={15} />
+                </div>
+                <div className="bubble">
+                  <div className="typing">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                </div>
               </div>
             )}
+            <div ref={endRef} />
           </div>
 
-          {/* Résultat */}
-          {result && (
-            <div className="card" style={{ marginTop: 16 }}>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-                <h2 style={{ margin: 0 }}>{plan?.title || "Document produit"}</h2>
-                <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button className="btn" onClick={exportXlsx}>
-                    <FileSpreadsheet size={16} /> Export Excel
-                  </button>
-                  <button className="btn" onClick={exportCsv}>
-                    <Download size={16} /> Export CSV
-                  </button>
-                  <button
-                    className="btn"
-                    onClick={() => generateReport(plan?.title || "Document produit", result.columns, result.rows)}
-                    disabled={reportLoading}
-                  >
-                    {reportLoading ? <span className="spinner" /> : <FileText size={16} />} Rapport de synthèse
-                  </button>
-                </div>
-              </div>
+          {error && <div className="error-box" style={{ margin: "0 0 8px" }}>{error}</div>}
 
-              {plan?.explanation && <p className="subtitle">{plan.explanation}</p>}
-
-              {result.stepNotes.length > 0 && (
-                <details style={{ margin: "8px 0" }}>
-                  <summary className="hint">Étapes appliquées ({result.stepNotes.length})</summary>
-                  <ul>
-                    {result.stepNotes.map((n, i) => (
-                      <li key={i} className="hint">
-                        {n}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-
-              {result.warnings.length > 0 && (
-                <div className="hint" style={{ color: "#f59e0b" }}>
-                  ⚠️ {result.warnings.join(" ")}
-                </div>
-              )}
-
-              <div style={{ overflowX: "auto", marginTop: 8 }}>
-                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
-                  <thead>
-                    <tr>
-                      {result.columns.map((c) => (
-                        <th
-                          key={c}
-                          style={{
-                            textAlign: "left",
-                            borderBottom: "2px solid rgba(148,163,184,0.4)",
-                            padding: "6px 10px",
-                            position: "sticky",
-                            top: 0,
-                          }}
-                        >
-                          {c}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.rows.slice(0, MAX_DISPLAY_ROWS).map((r, i) => (
-                      <tr key={i}>
-                        {result.columns.map((c) => (
-                          <td
-                            key={c}
-                            style={{
-                              borderBottom: "1px solid rgba(148,163,184,0.2)",
-                              padding: "5px 10px",
-                            }}
-                          >
-                            {r[c] === null || r[c] === undefined
-                              ? ""
-                              : typeof r[c] === "number"
-                                ? (r[c] as number).toLocaleString("fr-FR", { maximumFractionDigits: 4 })
-                                : String(r[c])}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {result.rows.length > MAX_DISPLAY_ROWS && (
-                <div className="hint" style={{ marginTop: 8 }}>
-                  Aperçu des {MAX_DISPLAY_ROWS} premières lignes sur {result.rows.length}. L’export
-                  contient tout.
-                </div>
-              )}
-            </div>
-          )}
-
-          {reportError && (
-            <div className="error-box" style={{ marginTop: 16 }}>
-              {reportError}
-            </div>
-          )}
-
-          {report && (
-            <div className="card" style={{ marginTop: 16 }}>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-                <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
-                  <FileText size={20} /> {report.title}
-                </h2>
-                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                  <button className="btn" onClick={() => downloadDocx(report)}>
-                    <Download size={16} /> Word
-                  </button>
-                  <button className="btn" onClick={() => downloadMarkdown(report)}>
-                    <Download size={16} /> Markdown
-                  </button>
-                </div>
-              </div>
-              {report.overview && <p style={{ whiteSpace: "pre-wrap" }}>{report.overview}</p>}
-              {report.findings.length > 0 && (
-                <>
-                  <h3>Constats</h3>
-                  <ul>
-                    {report.findings.map((f, i) => (
-                      <li key={i} style={{ marginBottom: 4 }}>
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-              {report.recommendations.length > 0 && (
-                <>
-                  <h3>Recommandations</h3>
-                  <ul>
-                    {report.recommendations.map((f, i) => (
-                      <li key={i} style={{ marginBottom: 4 }}>
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
-          )}
-        </>
+          <form
+            className="chat-input"
+            onSubmit={(e) => {
+              e.preventDefault();
+              run(input);
+            }}
+          >
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Posez une question sur vos données…"
+              disabled={loading}
+            />
+            <button className="btn send" type="submit" disabled={loading || !input.trim()}>
+              {loading ? <span className="spinner" /> : <Send size={16} />}
+            </button>
+          </form>
+        </div>
       )}
     </main>
   );
 }
+
+const CHAT_CSS = `
+.asst-head { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.asst-fileinfo { display:flex; align-items:center; gap:8px; margin-left:auto; font-size:13px; opacity:.9; flex-wrap:wrap; }
+.btn-sm { padding:4px 8px; font-size:12px; }
+.chat { display:flex; flex-direction:column; height: calc(100vh - 180px); min-height: 420px; }
+.chat-scroll { flex:1; overflow-y:auto; padding:8px 2px 16px; }
+.chat-empty { text-align:center; opacity:.8; margin-top:48px; display:flex; flex-direction:column; align-items:center; gap:10px; }
+.chip-row { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; max-width:640px; }
+.chip { background:rgba(148,163,184,.12); border:1px solid rgba(148,163,184,.3); color:inherit; border-radius:999px; padding:8px 14px; font-size:13px; cursor:pointer; }
+.chip:hover { background:rgba(148,163,184,.22); }
+.msg { display:flex; gap:10px; margin:14px 0; align-items:flex-start; }
+.msg .avatar { flex:0 0 auto; width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:600; background:rgba(148,163,184,.18); }
+.msg.assistant .avatar { background:linear-gradient(135deg,#3b82f6,#8b5cf6); color:#fff; }
+.msg .bubble { position:relative; border-radius:12px; padding:10px 14px; max-width:860px; }
+.msg.user .bubble { background:rgba(59,130,246,.14); }
+.msg.assistant .bubble { background:rgba(148,163,184,.10); }
+.user-text { white-space:pre-wrap; }
+.copy-btn { position:absolute; top:6px; right:6px; background:transparent; border:none; color:inherit; opacity:.45; cursor:pointer; padding:2px; }
+.copy-btn:hover { opacity:.9; }
+.typing { display:flex; gap:5px; padding:4px 2px; }
+.typing span { width:7px; height:7px; border-radius:50%; background:currentColor; opacity:.5; animation:typing 1s infinite; }
+.typing span:nth-child(2){ animation-delay:.15s; } .typing span:nth-child(3){ animation-delay:.3s; }
+@keyframes typing { 0%,60%,100%{ transform:translateY(0); opacity:.35 } 30%{ transform:translateY(-4px); opacity:.9 } }
+.chat-input { display:flex; gap:8px; padding-top:8px; border-top:1px solid rgba(148,163,184,.2); }
+.chat-input input { flex:1; padding:12px 14px; border-radius:10px; }
+.chat-input .send { padding:0 16px; }
+.result { margin-top:10px; border:1px solid rgba(148,163,184,.25); border-radius:10px; padding:8px; }
+.result-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:6px; }
+.result-actions { display:flex; gap:6px; flex-wrap:wrap; margin-left:auto; }
+.result-table { overflow-x:auto; max-height:360px; overflow-y:auto; }
+.result-table table { border-collapse:collapse; width:100%; font-size:12.5px; }
+.result-table th { position:sticky; top:0; background:#1e293b; text-align:left; padding:6px 10px; border-bottom:2px solid rgba(148,163,184,.4); }
+.result-table td { padding:5px 10px; border-bottom:1px solid rgba(148,163,184,.18); white-space:nowrap; }
+.md :first-child { margin-top:0; } .md :last-child { margin-bottom:0; }
+.md p { margin:.5em 0; line-height:1.55; }
+.md ul, .md ol { margin:.5em 0; padding-left:1.4em; } .md li { margin:.2em 0; }
+.md h1,.md h2,.md h3 { margin:.6em 0 .3em; line-height:1.3; }
+.md h1{ font-size:1.3em } .md h2{ font-size:1.15em } .md h3{ font-size:1.05em }
+.md code { background:rgba(148,163,184,.2); padding:1px 5px; border-radius:4px; font-size:.9em; }
+.md pre { background:rgba(15,23,42,.6); padding:10px 12px; border-radius:8px; overflow-x:auto; }
+.md pre code { background:transparent; padding:0; }
+.md blockquote { border-left:3px solid rgba(148,163,184,.5); margin:.5em 0; padding:.2em 0 .2em 12px; opacity:.9; }
+.md table { border-collapse:collapse; margin:.6em 0; width:100%; font-size:13px; display:block; overflow-x:auto; }
+.md th { background:#1e293b; text-align:left; padding:6px 10px; border:1px solid rgba(148,163,184,.35); }
+.md td { padding:6px 10px; border:1px solid rgba(148,163,184,.25); }
+.md a { color:#60a5fa; }
+`;
