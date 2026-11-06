@@ -121,8 +121,10 @@ function buildUser(sheets: SheetContext[], question: string, toolResults: unknow
   const parts: string[] = [];
   if (Array.isArray(toolResults) && toolResults.length) {
     parts.push(
-      "RÉSULTATS CALCULÉS (EXACTS, calculés sur TOUTES les données — tu DOIS répondre à partir de ces chiffres, action:\"answer\") :",
-      JSON.stringify(toolResults).slice(0, 60000),
+      "RÉSULTATS CALCULÉS (EXACTS, calculés sur TOUTES les données — tu DOIS répondre à partir de ces chiffres, action:\"answer\").",
+      "Le champ 'rows' peut être un EXTRAIT ; 'totalRows' donne le nombre total de lignes et le tableau COMPLET est déjà affiché à l'utilisateur.",
+      "Pour une longue liste, réponds de façon CONCISE (total, points clés) sans réclamer plus de lignes :",
+      JSON.stringify(toolResults).slice(0, 40000),
       "",
     );
   }

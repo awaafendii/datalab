@@ -103,7 +103,22 @@ export default function AssistantPage() {
         const r = executePlan(ds, step.plan);
         setPlan(step.plan);
         setResult(r);
-        toolResults.push({ title: step.plan.title || "Calcul", columns: r.columns, rows: r.rows.slice(0, 200) });
+        // On ne renvoie au modèle qu'un EXTRAIT (le tableau complet est affiché
+        // à l'utilisateur) + le total, pour rester sous la limite de tokens.
+        const extrait = r.rows.slice(0, 20).map((row) => {
+          const o: Record<string, unknown> = {};
+          for (const c of r.columns) {
+            const v = row[c];
+            o[c] = typeof v === "string" && v.length > 80 ? v.slice(0, 80) + "…" : v;
+          }
+          return o;
+        });
+        toolResults.push({
+          title: step.plan.title || "Calcul",
+          columns: r.columns,
+          rows: extrait,
+          totalRows: r.rows.length,
+        });
       }
       if (!answered) {
         setMessages((m) => [

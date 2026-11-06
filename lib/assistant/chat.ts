@@ -58,7 +58,8 @@ export function buildSheetsContext(workbook: WorkbookInput): SheetContext[] {
 export interface ToolResult {
   title: string;
   columns: string[];
-  rows: Record<string, unknown>[];
+  rows: Record<string, unknown>[]; // EXTRAIT seulement (le tableau complet est affiché à l'utilisateur)
+  totalRows: number; // nombre total de lignes du résultat
 }
 
 // Une étape de la boucle agentique : soit l'IA demande un calcul (compute),
